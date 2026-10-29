@@ -1,0 +1,45 @@
+{
+  "name": "telebhaja",
+  "version": "1.0.0",
+  "description": "Self-hosted personal OTT platform with intelligent media scanning",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "dev:client": "vite",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "scan": "tsx src/server/scanner/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/parser.test.ts && tsx test/integration.test.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mime-types": "^2.1.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "tsx": "^4.9.3",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.10"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

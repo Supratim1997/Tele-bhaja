@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  telebhaja:
+    image: node:20-slim
+    container_name: telebhaja
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      sh -c "
+        apt-get update -qq &&
+        apt-get install -y --no-install-recommends ffmpeg curl &&
+        npm install &&
+        npm run build &&
+        node dist/server/index.js
+      "
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: "0.0.0.0"
+      # Mount path inside container
+      MEDIA_STORAGE_PATH: /media
+      DB_PATH: /data/telebhaja.db
+      TMDB_API_KEY: "${TMDB_API_KEY:-}"
+      SCAN_ON_STARTUP: "true"
+      TRANSCODE_VIDEO_BITRATE: "2000"
+      TRANSCODE_AUDIO_BITRATE: "128"
+      TRANSCODE_MAX_CONCURRENT: "2"
+    volumes:
+      # Project source
+      - .:/app
+      # Persistent DB
+      - telebhaja_data:/data
+      # External drive (edit host path to match your drive)
+      - type: bind
+        source: "${MEDIA_STORAGE_PATH:-/mnt/media}"
+        target: /media
+        read_only: true
+    # Hardware acceleration: uncomment for Intel VAAPI (Linux)
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # For NVIDIA NVENC, use the nvidia runtime:
+    # runtime: nvidia
+    # environment:
+    #   NVIDIA_VISIBLE_DEVICES: all
+    #   NVIDIA_DRIVER_CAPABILITIES: video,compute,utility
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  telebhaja_data:
+    driver: local

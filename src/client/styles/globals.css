@@ -1,0 +1,197 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base resets & CSS variables ────────────────────────────────────────── */
+:root {
+  --brand: theme('colors.brand.500');
+  --brand-dark: theme('colors.brand.700');
+  --surface-bg: theme('colors.surface.950');
+  --surface-card: theme('colors.surface.900');
+  --surface-elevated: theme('colors.surface.800');
+  --text-primary: theme('colors.white');
+  --text-secondary: theme('colors.surface.300');
+  --text-muted: theme('colors.surface.500');
+  --radius: 12px;
+  --radius-lg: 20px;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  min-height: 100dvh;
+  overscroll-behavior: none;
+}
+
+/* ── Custom scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #404040; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #525252; }
+
+/* ── Focus ring ─────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* ── Glassmorphism card ─────────────────────────────────────────────────── */
+@layer components {
+  .glass-card {
+    @apply bg-surface-900/60 backdrop-blur-md border border-white/5 rounded-2xl;
+  }
+  
+  .glass-overlay {
+    @apply bg-black/40 backdrop-blur-sm;
+  }
+
+  /* Media card hover effect */
+  .media-card {
+    @apply relative overflow-hidden rounded-xl cursor-pointer transition-all duration-300;
+    transform: translateZ(0);
+  }
+  .media-card:hover {
+    @apply scale-105 shadow-2xl;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08);
+    z-index: 10;
+  }
+  .media-card:hover .card-overlay {
+    @apply opacity-100;
+  }
+  .media-card:hover .card-info {
+    @apply translate-y-0 opacity-100;
+  }
+
+  .card-overlay {
+    @apply absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-60 transition-opacity duration-300;
+  }
+
+  .card-info {
+    @apply absolute bottom-0 left-0 right-0 p-3 translate-y-2 opacity-0 transition-all duration-300;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  /* Shimmer skeleton */
+  .skeleton {
+    @apply bg-surface-800 relative overflow-hidden rounded;
+    background: linear-gradient(90deg, #1c1c1c 25%, #2a2a2a 50%, #1c1c1c 75%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+
+  /* Section title */
+  .section-title {
+    @apply font-display font-bold text-xl md:text-2xl text-white tracking-tight;
+  }
+
+  /* Scrollable horizontal row */
+  .scroll-row {
+    @apply flex gap-3 md:gap-4 overflow-x-auto pb-3;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scroll-row::-webkit-scrollbar { display: none; }
+
+  /* Pill filter button */
+  .filter-pill {
+    @apply px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 cursor-pointer border;
+  }
+  .filter-pill.active {
+    @apply bg-brand-600 border-brand-500 text-white shadow-lg;
+    box-shadow: 0 0 20px rgba(255, 32, 32, 0.3);
+  }
+  .filter-pill:not(.active) {
+    @apply bg-surface-800/60 border-surface-700 text-surface-300 hover:bg-surface-700 hover:text-white;
+  }
+
+  /* Progress bar */
+  .progress-bar {
+    @apply h-1 rounded-full bg-surface-700 overflow-hidden;
+  }
+  .progress-fill {
+    @apply h-full bg-brand-500 rounded-full transition-all duration-300;
+  }
+
+  /* Video player controls */
+  .player-btn {
+    @apply flex items-center justify-center rounded-full transition-all duration-150 active:scale-90;
+  }
+}
+
+/* ── Horizontal scroll snap for mobile ─────────────────────────────────── */
+.snap-row {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.snap-row > * {
+  scroll-snap-align: start;
+}
+
+/* ── Hero gradient overlay ──────────────────────────────────────────────── */
+.hero-gradient {
+  background: linear-gradient(
+    to right,
+    rgba(10, 10, 10, 0.95) 0%,
+    rgba(10, 10, 10, 0.7) 40%,
+    rgba(10, 10, 10, 0.2) 70%,
+    transparent 100%
+  );
+}
+
+@media (max-width: 768px) {
+  .hero-gradient {
+    background: linear-gradient(
+      to top,
+      rgba(10, 10, 10, 0.98) 0%,
+      rgba(10, 10, 10, 0.7) 50%,
+      rgba(10, 10, 10, 0.2) 100%
+    );
+  }
+}
+
+/* ── Bottom nav safe area ───────────────────────────────────────────────── */
+.bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ── Fullscreen video ───────────────────────────────────────────────────── */
+video::-webkit-media-controls {
+  display: none !important;
+}
+video {
+  -webkit-playsinline: true;
+}
+
+/* ── Modal backdrop ─────────────────────────────────────────────────────── */
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+.toast {
+  @apply fixed bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-sm font-medium;
+  @apply bg-surface-800 border border-surface-700 text-white shadow-2xl z-50;
+  animation: slideUp 0.3s ease-out, fadeOut 0.3s ease-in 2.7s;
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
