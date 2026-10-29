@@ -23,15 +23,48 @@ if exist .env (
 )
 
 :: Allow override from arg
-if not "%~1"=="" set MEDIA_STORAGE_PATH=%~1
+if not "%~1"=="" (
+  if /i "%~1"=="--dev" (
+    set DEV_MODE=true
+    if not "%~2"=="" set MEDIA_STORAGE_PATH=%~2
+  ) else (
+    set MEDIA_STORAGE_PATH=%~1
+  )
+)
 
 :: Set defaults
 if not defined PORT set PORT=3000
 if not defined HOST set HOST=0.0.0.0
 if not defined NODE_ENV set NODE_ENV=production
-if not defined MEDIA_STORAGE_PATH set MEDIA_STORAGE_PATH=E:\Media
 if not defined DB_PATH set DB_PATH=.\data\telebhaja.db
 if not defined SCAN_ON_STARTUP set SCAN_ON_STARTUP=true
+
+:: Verify media path exists, or interactively prompt
+:check_media_path
+if not defined MEDIA_STORAGE_PATH set MEDIA_STORAGE_PATH=E:\Media
+if not exist "!MEDIA_STORAGE_PATH!" (
+  echo.
+  echo  [Notice] Media path "!MEDIA_STORAGE_PATH!" was not found.
+  set /p USER_PATH="  Enter your media folder path (e.g. E:\Movies or E:\): "
+  if not "!USER_PATH!"=="" (
+    set USER_PATH=!USER_PATH:"=!
+    set MEDIA_STORAGE_PATH=!USER_PATH!
+    goto :check_media_path
+  )
+)
+
+:: Save to .env if .env doesn't exist, so 'npm run dev' also remembers it
+if not exist .env (
+  (
+    echo PORT=%PORT%
+    echo HOST=%HOST%
+    echo NODE_ENV=%NODE_ENV%
+    echo MEDIA_STORAGE_PATH=!MEDIA_STORAGE_PATH!
+    echo DB_PATH=%DB_PATH%
+    echo SCAN_ON_STARTUP=%SCAN_ON_STARTUP%
+  ) > .env
+  echo   [Saved] Media path saved to .env for future runs.
+)
 
 echo.
 echo   Media Path : %MEDIA_STORAGE_PATH%
@@ -104,7 +137,11 @@ echo    Press Ctrl+C to stop.
 echo.
 
 :: Start server
-node dist\server\index.js
+if /i "%DEV_MODE%"=="true" (
+  call npx tsx watch src/server/index.ts
+) else (
+  node dist\server\index.js
+)
 
 pause
 endlocal

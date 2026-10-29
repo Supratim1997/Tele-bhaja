@@ -16,15 +16,16 @@ export class StreamingService {
   async streamMovie(req: Request, res: Response, id: number): Promise<void> {
     const db = getDb();
     const item = await db.prepare(`
-      SELECT id, file_path, file_size, mime_type, needs_transcode, audio_tracks
+      SELECT id, file_path, file_size, mime_type, needs_transcode, audio_tracks, is_excluded
       FROM media_items WHERE id=?
     `).get(id) as {
       id: number; file_path: string; file_size: number;
       mime_type: string; needs_transcode: number; audio_tracks: string;
+      is_excluded?: number;
     } | undefined;
 
-    if (!item) {
-      res.status(404).json({ error: 'Media not found' });
+    if (!item || item.is_excluded === 1) {
+      res.status(404).json({ error: 'Media not found or excluded from playback' });
       return;
     }
 
@@ -42,15 +43,16 @@ export class StreamingService {
   async streamEpisode(req: Request, res: Response, id: number): Promise<void> {
     const db = getDb();
     const item = await db.prepare(`
-      SELECT id, file_path, file_size, mime_type, needs_transcode, audio_tracks
+      SELECT id, file_path, file_size, mime_type, needs_transcode, audio_tracks, is_excluded
       FROM episodes WHERE id=?
     `).get(id) as {
       id: number; file_path: string; file_size: number;
       mime_type: string; needs_transcode: number; audio_tracks: string;
+      is_excluded?: number;
     } | undefined;
 
-    if (!item) {
-      res.status(404).json({ error: 'Episode not found' });
+    if (!item || item.is_excluded === 1) {
+      res.status(404).json({ error: 'Episode not found or excluded from playback' });
       return;
     }
 

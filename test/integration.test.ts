@@ -8,6 +8,7 @@ import { libraryRouter } from '../src/server/routes/library.js';
 import { streamRouter } from '../src/server/routes/stream.js';
 import { progressRouter } from '../src/server/routes/progress.js';
 import { scanRouter, franchiseRouter, categoriesRouter } from '../src/server/routes/scan.js';
+import { controlRouter } from '../src/server/routes/control.js';
 import { scanner } from '../src/server/scanner/scanner.js';
 
 const TEST_DIR = path.resolve('./data/test_media');
@@ -141,6 +142,7 @@ async function run() {
   app.use('/api/scan',       scanRouter);
   app.use('/api/franchises', franchiseRouter);
   app.use('/api/categories', categoriesRouter);
+  app.use('/api/control',    controlRouter);
 
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -283,6 +285,101 @@ async function run() {
     assert(recentRes.status === 200, 'GET /api/progress/recent/all returns 200');
     const recent = JSON.parse(recentRes.body);
     assert(recent.movies.some((m: any) => m.mediaId === testMovie.id), 'Recent watches includes updated movie');
+
+    // Test 9: Content Control & Categorization Portal
+    console.log('\n8. Testing Content Control & Categorization Portal:');
+
+    // 8.1 GET /api/control/tree
+    const treeRes = await makeRequest(server, '/api/control/tree');
+    assert(treeRes.status === 200, 'GET /api/control/tree returns 200');
+    const treeData = JSON.parse(treeRes.body);
+    assert(Boolean(treeData.tree && treeData.stats), 'Response has tree and stats objects');
+    assert(treeData.stats.totalMediaFiles === 11, `Tree reports 11 media files (got ${treeData.stats.totalMediaFiles})`);
+    assert(treeData.stats.excludedMediaFiles === 0, `Initial excluded media is 0 (got ${treeData.stats.excludedMediaFiles})`);
+
+    // 8.2 POST /api/control/toggle - Exclude single movie (Inception)
+    const inceptionFile = path.join(TEST_DIR, 'English/Inception (2010)/Inception.2010.1080p.mp4');
+    const inceptionMovie = library.movies.find((m: any) => m.title === 'Inception');
+    assert(Boolean(inceptionMovie), 'Inception movie found in initial library');
+
+    const toggleRes = await makeRequest(server, '/api/control/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: inceptionFile, isExcluded: true }),
+    });
+    assert(toggleRes.status === 200, 'POST /api/control/toggle returns 200');
+
+    // 8.3 Verify Inception excluded from library
+    const libAfterExclude = await makeRequest(server, '/api/library');
+    const libAfterData = JSON.parse(libAfterExclude.body);
+    assert(!libAfterData.movies.some((m: any) => m.title === 'Inception'), 'Inception is excluded from OTT library');
+
+    // 8.4 Verify Inception streaming returns 404
+    const streamExcluded = await makeRequest(server, `/api/stream/movie/${inceptionMovie.id}`);
+    assert(streamExcluded.status === 404, 'Streaming excluded movie returns 404 Not Found');
+
+    // 8.5 Verify exclusion persists across rescan
+    await scanner.scan(TEST_DIR);
+    const libAfterRescan = await makeRequest(server, '/api/library');
+    const libAfterRescanData = JSON.parse(libAfterRescan.body);
+    assert(!libAfterRescanData.movies.some((m: any) => m.title === 'Inception'), 'Inception remains excluded after rescan');
+
+    // 8.6 Toggle Inception back to included
+    const untoggleRes = await makeRequest(server, '/api/control/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: inceptionFile, isExcluded: false }),
+    });
+    assert(untoggleRes.status === 200, 'POST /api/control/toggle re-including returns 200');
+    const libAfterUntoggle = await makeRequest(server, '/api/library');
+    const libAfterUntoggleData = JSON.parse(libAfterUntoggle.body);
+    assert(libAfterUntoggleData.movies.some((m: any) => m.title === 'Inception'), 'Inception is re-included in OTT library');
+
+    // 8.7 Directory exclusion: Exclude 'English' directory
+    const englishDir = path.join(TEST_DIR, 'English');
+    const toggleDirRes = await makeRequest(server, '/api/control/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: englishDir, isExcluded: true, isDirectory: true }),
+    });
+    assert(toggleDirRes.status === 200, 'POST /api/control/toggle on directory returns 200');
+    const libAfterDirEx = await makeRequest(server, '/api/library');
+    const libAfterDirExData = JSON.parse(libAfterDirEx.body);
+    assert(!libAfterDirExData.movies.some((m: any) => m.title === 'Inception'), 'Directory exclusion excludes nested Inception');
+
+    // 8.8 Manual categorization override: PUT /api/control/media/movie/:id
+    const sonarMovie = libAfterDirExData.movies.find((m: any) => m.title.includes('Sonar Kella'));
+    assert(Boolean(sonarMovie), 'Sonar Kella movie found for manual categorization test');
+    if (sonarMovie) {
+      const overrideRes = await makeRequest(server, `/api/control/media/movie/${sonarMovie.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'The Golden Fortress',
+          year: 1974,
+          franchiseName: 'Feluda Mysteries',
+          isAnimated: false,
+          languages: ['bn', 'en'],
+        }),
+      });
+      assert(overrideRes.status === 200, 'PUT /api/control/media/movie/:id returns 200');
+
+      const updatedLib = await makeRequest(server, '/api/library');
+      const updatedLibData = JSON.parse(updatedLib.body);
+      const updatedMovie = updatedLibData.movies.find((m: any) => m.id === sonarMovie.id);
+      assert(updatedMovie?.title === 'The Golden Fortress', `Movie title updated to "The Golden Fortress" (got ${updatedMovie?.title})`);
+      assert(updatedMovie?.franchiseName === 'Feluda Mysteries', `Movie franchise updated to "Feluda Mysteries" (got ${updatedMovie?.franchiseName})`);
+    }
+
+    // 8.9 Reset exclusions: POST /api/control/reset
+    const resetRes = await makeRequest(server, '/api/control/reset', { method: 'POST' });
+    assert(resetRes.status === 200, 'POST /api/control/reset returns 200');
+    const treeAfterReset = await makeRequest(server, '/api/control/tree');
+    const treeResetData = JSON.parse(treeAfterReset.body);
+    assert(treeResetData.stats.excludedMediaFiles === 0, 'All exclusions successfully reset');
+    const libAfterReset = await makeRequest(server, '/api/library');
+    const libResetData = JSON.parse(libAfterReset.body);
+    assert(libResetData.movies.some((m: any) => m.title === 'Inception'), 'Inception restored in library after reset');
 
   } finally {
     server.close();

@@ -9,6 +9,7 @@ import { libraryRouter } from './routes/library.js';
 import { streamRouter } from './routes/stream.js';
 import { progressRouter } from './routes/progress.js';
 import { scanRouter, franchiseRouter, categoriesRouter } from './routes/scan.js';
+import { controlRouter } from './routes/control.js';
 import { scanner } from './scanner/scanner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,7 @@ async function main() {
   app.use('/api/scan',       scanRouter);
   app.use('/api/franchises', franchiseRouter);
   app.use('/api/categories', categoriesRouter);
+  app.use('/api/control',    controlRouter);
 
   // ── Health check ────────────────────────────────────────────────────────
   app.get('/api/health', async (_req, res) => {

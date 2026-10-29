@@ -19,9 +19,9 @@ libraryRouter.get('/', async (req, res) => {
     const offset = isUnlimited ? 0 : (pageNum - 1) * limitNum;
 
     // Build movie query conditions
-    const movieConds: string[] = [];
+    const movieConds: string[] = ['m.is_excluded = 0'];
     const movieParams: unknown[] = [];
-    const seriesConds: string[] = [];
+    const seriesConds: string[] = ['s.is_excluded = 0'];
     const seriesParams: unknown[] = [];
     const franchiseConds: string[] = [];
     const franchiseParams: unknown[] = [];
@@ -113,7 +113,7 @@ libraryRouter.get('/', async (req, res) => {
     const rawFranchises = await db.prepare(`
       SELECT f.*, COUNT(m.id) as item_count
       FROM franchises f
-      LEFT JOIN media_items m ON m.franchise_id = f.id
+      LEFT JOIN media_items m ON m.franchise_id = f.id AND m.is_excluded = 0
       WHERE 1=1 ${franchiseWhere}
       GROUP BY f.id
       HAVING item_count > 0
@@ -130,12 +130,12 @@ libraryRouter.get('/', async (req, res) => {
     }));
 
     // Category summaries
-    const movieCountRow = await db.prepare('SELECT COUNT(*) as c FROM media_items').get();
-    const seriesCountRow = await db.prepare('SELECT COUNT(*) as c FROM series').get();
-    const animMovieRow = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_animated=1').get();
-    const animSeriesRow = await db.prepare('SELECT COUNT(*) as c FROM series WHERE is_animated=1').get();
+    const movieCountRow = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_excluded = 0').get();
+    const seriesCountRow = await db.prepare('SELECT COUNT(*) as c FROM series WHERE is_excluded = 0').get();
+    const animMovieRow = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_animated=1 AND is_excluded = 0').get();
+    const animSeriesRow = await db.prepare('SELECT COUNT(*) as c FROM series WHERE is_animated=1 AND is_excluded = 0').get();
     const franchiseRow = await db.prepare(`
-      SELECT COUNT(*) as c FROM franchises WHERE (SELECT COUNT(*) FROM media_items WHERE franchise_id=franchises.id) > 0
+      SELECT COUNT(*) as c FROM franchises WHERE (SELECT COUNT(*) FROM media_items WHERE franchise_id=franchises.id AND is_excluded = 0) > 0
     `).get();
 
     const movieCount = (movieCountRow?.c as number) ?? 0;
@@ -201,7 +201,7 @@ libraryRouter.get('/movies', async (req, res) => {
   try {
     const db = getDb();
     const { language, animated } = req.query as Record<string, string>;
-    const conds: string[] = [];
+    const conds: string[] = ['is_excluded=0'];
     const params: unknown[] = [];
     if (language) { conds.push(`languages LIKE ?`); params.push(`%"${language}"%`); }
     if (animated === '1') { conds.push(`is_animated=1`); }
@@ -219,7 +219,7 @@ libraryRouter.get('/series', async (req, res) => {
   try {
     const db = getDb();
     const { language, animated } = req.query as Record<string, string>;
-    const conds: string[] = [];
+    const conds: string[] = ['s.is_excluded=0'];
     const params: unknown[] = [];
     if (language) { conds.push(`s.languages LIKE ?`); params.push(`%"${language}"%`); }
     if (animated === '1') { conds.push(`s.is_animated=1`); }
@@ -290,7 +290,12 @@ libraryRouter.get('/movies/:id', async (req, res) => {
   try {
     const db = getDb();
     const id = parseInt(req.params.id, 10);
-    const row = await db.prepare('SELECT * FROM media_items WHERE id=?').get(id);
+    const row = await db.prepare(`
+      SELECT m.*, f.name as franchise_name
+      FROM media_items m
+      LEFT JOIN franchises f ON m.franchise_id = f.id
+      WHERE m.id=?
+    `).get(id);
     if (!row) { res.status(404).json({ error: 'Not found' }); return; }
     res.json(deserializeMovie(row));
   } catch (err: unknown) {
@@ -322,7 +327,9 @@ function deserializeMovie(row: Record<string, unknown>): MediaItem {
     subtitleTracks: safeParseJson(row.subtitle_tracks as string, []),
     needsTranscode: Boolean(row.needs_transcode),
     franchiseId: row.franchise_id ? Number(row.franchise_id) : undefined,
+    franchiseName: row.franchise_name ? String(row.franchise_name) : undefined,
     franchiseOrder: row.franchise_order ? Number(row.franchise_order) : undefined,
+    isExcluded: Boolean(row.is_excluded),
     createdAt: String(row.created_at ?? ''),
     updatedAt: String(row.updated_at ?? ''),
   };
@@ -342,6 +349,7 @@ function deserializeSeries(row: Record<string, unknown>): Series {
     seasonCount: Number(row.season_count ?? 0),
     episodeCount: Number(row.episode_count ?? 0),
     franchiseId: row.franchise_id ? Number(row.franchise_id) : undefined,
+    isExcluded: Boolean(row.is_excluded),
     createdAt: String(row.created_at ?? ''),
     updatedAt: String(row.updated_at ?? ''),
   };
@@ -363,6 +371,7 @@ function deserializeEpisode(row: Record<string, unknown>): Episode {
     audioTracks: safeParseJson(row.audio_tracks as string, []),
     subtitleTracks: safeParseJson(row.subtitle_tracks as string, []),
     needsTranscode: Boolean(row.needs_transcode),
+    isExcluded: Boolean(row.is_excluded),
     createdAt: String(row.created_at ?? ''),
   };
 }

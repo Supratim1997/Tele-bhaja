@@ -58,7 +58,19 @@ export class MediaScanner extends EventEmitter {
       }
 
       this.emit('log', `Collecting files from ${rootPath}...`);
-      const allFiles = this.collectFiles(rootPath);
+      const controlsRows = await db.prepare('SELECT path, is_directory FROM path_controls WHERE is_excluded = 1').all();
+      const excludedDirSet = new Set<string>();
+      const excludedFileSet = new Set<string>();
+      for (const r of controlsRows) {
+        const p = path.resolve(String(r.path)).toLowerCase();
+        if (Number(r.is_directory) === 1) {
+          excludedDirSet.add(p);
+        } else {
+          excludedFileSet.add(p);
+        }
+      }
+
+      const allFiles = this.collectFiles(rootPath, excludedDirSet, excludedFileSet);
       this._status.totalFound = allFiles.length;
       this.emit('log', `Found ${allFiles.length} media files`);
       this.emit('status', this._status);
@@ -109,7 +121,11 @@ export class MediaScanner extends EventEmitter {
     }
   }
 
-  private collectFiles(dir: string): string[] {
+  private collectFiles(
+    dir: string,
+    excludedDirSet: Set<string> = new Set(),
+    excludedFileSet: Set<string> = new Set()
+  ): string[] {
     const results: string[] = [];
     const IGNORE_DIRS = new Set([
       '$recycle.bin', 'system volume information', '.trashes',
@@ -129,6 +145,7 @@ export class MediaScanner extends EventEmitter {
         if (IGNORE_DIRS.has(entry.name.toLowerCase())) continue;
 
         const fullPath = path.join(current, entry.name);
+        const resolvedPath = path.resolve(fullPath).toLowerCase();
 
         let isDir = entry.isDirectory();
         if (entry.isSymbolicLink()) {
@@ -140,8 +157,10 @@ export class MediaScanner extends EventEmitter {
         }
 
         if (isDir) {
+          if (excludedDirSet.has(resolvedPath)) continue;
           walk(fullPath);
         } else if (entry.isFile() || entry.isSymbolicLink()) {
+          if (excludedFileSet.has(resolvedPath)) continue;
           const ext = path.extname(entry.name).toLowerCase();
           if (SUPPORTED_EXTENSIONS.has(ext)) {
             // Filter out empty / 0-byte corrupted files (< 1KB)
@@ -223,6 +242,15 @@ export class MediaScanner extends EventEmitter {
       });
     }
 
+    // Check if path or any parent directory is excluded
+    const normPath = filePath.replace(/\\/g, '/');
+    const existingRule = await db.prepare(`
+      SELECT is_excluded FROM path_controls
+      WHERE path = ? OR path = ? OR (? LIKE path || '/%' AND is_directory = 1)
+      ORDER BY LENGTH(path) DESC LIMIT 1
+    `).get(filePath, normPath, normPath);
+    const isExcluded = existingRule ? (Number(existingRule.is_excluded) === 1 ? 1 : 0) : 0;
+
     const now = new Date().toISOString();
     await db.execute({
       sql: `INSERT INTO media_items (
@@ -230,8 +258,8 @@ export class MediaScanner extends EventEmitter {
         tmdb_id, tmdb_rating, languages, is_animated,
         duration, file_path, file_size, mime_type,
         audio_tracks, subtitle_tracks, needs_transcode,
-        franchise_id, franchise_order, created_at, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        franchise_id, franchise_order, is_excluded, created_at, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(file_path) DO UPDATE SET
         title=excluded.title, year=excluded.year, overview=excluded.overview,
         poster_path=excluded.poster_path, backdrop_path=excluded.backdrop_path,
@@ -242,6 +270,7 @@ export class MediaScanner extends EventEmitter {
         subtitle_tracks=excluded.subtitle_tracks, needs_transcode=excluded.needs_transcode,
         franchise_id=excluded.franchise_id,
         franchise_order=COALESCE(excluded.franchise_order, media_items.franchise_order),
+        is_excluded=COALESCE(media_items.is_excluded, excluded.is_excluded),
         updated_at=excluded.updated_at`,
       args: [
         meta.title ?? parsed.title,
@@ -260,6 +289,7 @@ export class MediaScanner extends EventEmitter {
         probe.needsTranscode ? 1 : 0,
         franchiseId,
         parsed.franchiseOrder ?? null,
+        isExcluded,
         now, now,
       ],
     });
@@ -339,17 +369,28 @@ export class MediaScanner extends EventEmitter {
     const episodeNum = parsed.episodeNumber ?? 1;
     const epTitle = parsed.episodeTitle || `Episode ${episodeNum}`;
     const now = new Date().toISOString();
+
+    // Check if path or any parent directory is excluded
+    const normPath = filePath.replace(/\\/g, '/');
+    const existingRule = await db.prepare(`
+      SELECT is_excluded FROM path_controls
+      WHERE path = ? OR path = ? OR (? LIKE path || '/%' AND is_directory = 1)
+      ORDER BY LENGTH(path) DESC LIMIT 1
+    `).get(filePath, normPath, normPath);
+    const isExcluded = existingRule ? (Number(existingRule.is_excluded) === 1 ? 1 : 0) : 0;
+
     await db.execute({
       sql: `INSERT INTO episodes (
         series_id, season_id, season_number, episode_number, title,
         duration, file_path, file_size, mime_type,
-        audio_tracks, subtitle_tracks, needs_transcode, created_at, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        audio_tracks, subtitle_tracks, needs_transcode, is_excluded, created_at, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(file_path) DO UPDATE SET
         season_number=excluded.season_number, episode_number=excluded.episode_number,
         title=excluded.title, duration=excluded.duration, file_size=excluded.file_size,
         mime_type=excluded.mime_type, audio_tracks=excluded.audio_tracks,
         subtitle_tracks=excluded.subtitle_tracks, needs_transcode=excluded.needs_transcode,
+        is_excluded=COALESCE(episodes.is_excluded, excluded.is_excluded),
         updated_at=excluded.updated_at`,
       args: [
         seriesId, seasonId, seasonNum, episodeNum,
@@ -359,8 +400,18 @@ export class MediaScanner extends EventEmitter {
         JSON.stringify(probe.audioTracks),
         JSON.stringify(probe.subtitleTracks),
         probe.needsTranscode ? 1 : 0,
+        isExcluded,
         now, now,
       ],
+    });
+
+    // Update parent series exclusion status
+    await db.execute({
+      sql: `UPDATE series SET is_excluded = CASE
+              WHEN (SELECT COUNT(*) FROM episodes WHERE series_id = series.id AND is_excluded = 0) = 0 THEN 1
+              ELSE 0
+            END, updated_at = ? WHERE id = ?`,
+      args: [now, seriesId],
     });
   }
 

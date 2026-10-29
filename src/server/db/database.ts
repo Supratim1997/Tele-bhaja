@@ -232,6 +232,16 @@ async function applySchema(db: Client): Promise<void> {
       errors        TEXT DEFAULT '[]',
       status        TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed'))
     )`,
+
+    // Path Controls (exclusion rules for files and directories)
+    `CREATE TABLE IF NOT EXISTS path_controls (
+      path          TEXT PRIMARY KEY,
+      is_excluded   INTEGER NOT NULL DEFAULT 1,
+      is_directory  INTEGER NOT NULL DEFAULT 0,
+      created_at    TEXT DEFAULT (datetime('now')),
+      updated_at    TEXT DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_path_controls_excluded ON path_controls(is_excluded)`,
   ];
 
   for (const sql of statements) {
@@ -242,6 +252,24 @@ async function applySchema(db: Client): Promise<void> {
       if (!msg.includes('already exists') && !msg.includes('UNIQUE')) {
         console.warn('[DB] Schema warning:', msg.slice(0, 120));
       }
+    }
+  }
+
+  // Schema migrations for is_excluded
+  const migrations = [
+    `ALTER TABLE media_items ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE episodes ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE series ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0`,
+    `CREATE INDEX IF NOT EXISTS idx_media_excluded ON media_items(is_excluded)`,
+    `CREATE INDEX IF NOT EXISTS idx_episodes_excluded ON episodes(is_excluded)`,
+    `CREATE INDEX IF NOT EXISTS idx_series_excluded ON series(is_excluded)`,
+  ];
+
+  for (const mig of migrations) {
+    try {
+      await db.execute(mig);
+    } catch {
+      // Column or index may already exist
     }
   }
 }

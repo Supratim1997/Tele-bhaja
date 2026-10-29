@@ -19,6 +19,7 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 import type {
   LibraryResponse, MediaItem, Series, SeriesDetailResponse,
   Franchise, CategorySummary, WatchProgress, ScanStatus,
+  FileTreeNode, ControlStats, MediaOverrideInput,
 } from '../../shared/types.js';
 
 // ── Library ──────────────────────────────────────────────────────────────────
@@ -88,6 +89,21 @@ export const api = {
     thumbnailMovieUrl: (id: number) => `${BASE}/stream/thumbnail/movie/${id}`,
     thumbnailEpisodeUrl: (id: number) => `${BASE}/stream/thumbnail/episode/${id}`,
     subtitleUrl: (path: string) => `${BASE}/stream/subtitle?path=${encodeURIComponent(path)}`,
+  },
+
+  control: {
+    getTree: (path?: string) => apiFetch<{ tree: FileTreeNode; stats: ControlStats }>(`/control/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+    toggle: (opts: { path?: string; paths?: string[]; isExcluded: boolean; isDirectory?: boolean }) =>
+      apiFetch<{ ok: boolean; count: number; isExcluded: boolean }>('/control/toggle', {
+        method: 'POST',
+        body: JSON.stringify(opts),
+      }),
+    updateMedia: (type: 'movie' | 'series' | 'episode', id: number, data: MediaOverrideInput) =>
+      apiFetch<{ ok: boolean; message: string }>(`/control/media/${type}/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    reset: () => apiFetch<{ ok: boolean; message: string }>('/control/reset', { method: 'POST' }),
   },
 
   health: () => apiFetch<{ ok: boolean; movies: number; series: number; mediaStoragePath: string }>('/health'),

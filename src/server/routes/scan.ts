@@ -50,7 +50,7 @@ franchiseRouter.get('/', async (_req, res) => {
       SELECT f.*,
         COUNT(m.id) as item_count
       FROM franchises f
-      LEFT JOIN media_items m ON m.franchise_id = f.id
+      LEFT JOIN media_items m ON m.franchise_id = f.id AND m.is_excluded = 0
       GROUP BY f.id
       HAVING item_count > 0
       ORDER BY f.name ASC
@@ -80,7 +80,7 @@ franchiseRouter.get('/:id', async (req, res) => {
     if (!franchise) { res.status(404).json({ error: 'Franchise not found' }); return; }
 
     const movies = await db.prepare(`
-      SELECT * FROM media_items WHERE franchise_id=? ORDER BY franchise_order ASC, year ASC, title ASC
+      SELECT * FROM media_items WHERE franchise_id=? AND is_excluded=0 ORDER BY franchise_order ASC, year ASC, title ASC
     `).all(id);
 
     res.json({
@@ -115,13 +115,13 @@ export const categoriesRouter = Router();
 categoriesRouter.get('/', async (_req, res) => {
   try {
     const db = getDb();
-    const movieRow = await db.prepare('SELECT COUNT(*) as c FROM media_items').get();
-    const seriesRow = await db.prepare('SELECT COUNT(*) as c FROM series').get();
-    const animMovieRow = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_animated=1').get();
-    const animSeriesRow = await db.prepare('SELECT COUNT(*) as c FROM series WHERE is_animated=1').get();
+    const movieRow = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_excluded=0').get();
+    const seriesRow = await db.prepare('SELECT COUNT(*) as c FROM series WHERE is_excluded=0').get();
+    const animMovieRow = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_animated=1 AND is_excluded=0').get();
+    const animSeriesRow = await db.prepare('SELECT COUNT(*) as c FROM series WHERE is_animated=1 AND is_excluded=0').get();
     const franchiseRow = await db.prepare(`
       SELECT COUNT(*) as c FROM franchises 
-      WHERE (SELECT COUNT(*) FROM media_items WHERE franchise_id=franchises.id) > 0
+      WHERE (SELECT COUNT(*) FROM media_items WHERE franchise_id=franchises.id AND is_excluded=0) > 0
     `).get();
 
     const movieCount = (movieRow?.c as number) ?? 0;

@@ -31,6 +31,7 @@ export interface Series {
   seasonCount: number;
   episodeCount: number;
   franchiseId?: number;
+  isExcluded?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -58,6 +59,7 @@ export interface Episode {
   audioTracks: AudioTrack[];
   subtitleTracks: SubtitleTrack[];
   needsTranscode: boolean;
+  isExcluded?: boolean;
   createdAt: string;
 }
 
@@ -81,7 +83,9 @@ export interface MediaItem {
   subtitleTracks: SubtitleTrack[];
   needsTranscode: boolean;
   franchiseId?: number;
+  franchiseName?: string;
   franchiseOrder?: number;
+  isExcluded?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -154,4 +158,45 @@ export interface StreamInfo {
   needsTranscode: boolean;
   audioTracks: AudioTrack[];
   subtitleTracks: SubtitleTrack[];
+}
+
+// ─── Portal & Content Control Types ──────────────────────────────────────────
+
+export interface FileTreeNode {
+  id: string;
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  size?: number;
+  extension?: string;
+  isMedia: boolean;
+  isExcluded: boolean;
+  mediaType?: 'movie' | 'series' | 'episode';
+  mediaId?: number;
+  title?: string;
+  year?: number;
+  isAnimated?: boolean;
+  languages?: string[];
+  franchiseName?: string;
+  totalMediaCount: number;
+  excludedMediaCount: number;
+  children?: FileTreeNode[];
+}
+
+export interface ControlStats {
+  rootPath: string;
+  totalFiles: number;
+  totalMediaFiles: number;
+  includedMediaFiles: number;
+  excludedMediaFiles: number;
+  totalDirectories: number;
+}
+
+export interface MediaOverrideInput {
+  title?: string;
+  year?: number;
+  isAnimated?: boolean;
+  languages?: string[];
+  franchiseName?: string;
+  isSeries?: boolean;
 }
