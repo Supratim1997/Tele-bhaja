@@ -23,30 +23,58 @@ libraryRouter.get('/', async (req, res) => {
     const movieParams: unknown[] = [];
     const seriesConds: string[] = [];
     const seriesParams: unknown[] = [];
+    const franchiseConds: string[] = [];
+    const franchiseParams: unknown[] = [];
 
-    if (search) {
-      movieConds.push(`title LIKE ?`);
-      movieParams.push(`%${search}%`);
-      seriesConds.push(`title LIKE ?`);
-      seriesParams.push(`%${search}%`);
+    if (search && search.trim()) {
+      const terms = search.trim().split(/\s+/).filter(Boolean);
+      for (const term of terms) {
+        const pattern = `%${term}%`;
+        // Movies: search title, franchise name, year, overview, and file path
+        movieConds.push(`(
+          m.title LIKE ? OR
+          (f.name IS NOT NULL AND f.name LIKE ?) OR
+          (m.year IS NOT NULL AND CAST(m.year AS TEXT) LIKE ?) OR
+          (m.overview IS NOT NULL AND m.overview LIKE ?) OR
+          m.file_path LIKE ?
+        )`);
+        movieParams.push(pattern, pattern, pattern, pattern, pattern);
+
+        // Series: search series title, year, overview, episode title, and episode file path
+        seriesConds.push(`(
+          s.title LIKE ? OR
+          (s.year IS NOT NULL AND CAST(s.year AS TEXT) LIKE ?) OR
+          (s.overview IS NOT NULL AND s.overview LIKE ?) OR
+          s.id IN (SELECT series_id FROM episodes WHERE title LIKE ? OR file_path LIKE ?)
+        )`);
+        seriesParams.push(pattern, pattern, pattern, pattern, pattern);
+
+        // Franchises: search name and overview
+        franchiseConds.push(`(
+          f.name LIKE ? OR
+          (f.overview IS NOT NULL AND f.overview LIKE ?)
+        )`);
+        franchiseParams.push(pattern, pattern);
+      }
     }
 
     if (language) {
-      movieConds.push(`languages LIKE ?`);
+      movieConds.push(`m.languages LIKE ?`);
       movieParams.push(`%"${language}"%`);
-      seriesConds.push(`languages LIKE ?`);
+      seriesConds.push(`s.languages LIKE ?`);
       seriesParams.push(`%"${language}"%`);
     }
 
     if (category === 'animated') {
-      movieConds.push(`is_animated=1`);
-      seriesConds.push(`is_animated=1`);
+      movieConds.push(`m.is_animated=1`);
+      seriesConds.push(`s.is_animated=1`);
     } else if (category === 'franchise') {
-      movieConds.push(`franchise_id IS NOT NULL`);
+      movieConds.push(`m.franchise_id IS NOT NULL`);
     }
 
     const movieWhere = movieConds.length > 0 ? `WHERE ${movieConds.join(' AND ')}` : '';
     const seriesWhere = seriesConds.length > 0 ? `WHERE ${seriesConds.join(' AND ')}` : '';
+    const franchiseWhere = franchiseConds.length > 0 ? `AND ${franchiseConds.join(' AND ')}` : '';
 
     // Fetch movies (skip if category is series-only)
     let movies: MediaItem[] = [];
@@ -63,9 +91,9 @@ libraryRouter.get('/', async (req, res) => {
       movies = rawMovies.map(deserializeMovie);
     }
 
-    // Fetch series (skip if category is movie-only)
+    // Fetch series (skip if category is movie-only or franchise-only)
     let seriesList: Series[] = [];
-    if (category !== 'movie' && category !== 'animated' && category !== 'franchise') {
+    if (category !== 'movie' && category !== 'franchise') {
       const rawSeries = await db.prepare(`
         SELECT s.*,
           COUNT(DISTINCT ss.id) as season_count,
@@ -79,21 +107,6 @@ libraryRouter.get('/', async (req, res) => {
         LIMIT ? OFFSET ?
       `).all(...seriesParams, limitNum, offset);
       seriesList = rawSeries.map(deserializeSeries);
-    } else if (category === 'animated') {
-      // Animated series
-      const rawSeries = await db.prepare(`
-        SELECT s.*,
-          COUNT(DISTINCT ss.id) as season_count,
-          COUNT(DISTINCT e.id) as episode_count
-        FROM series s
-        LEFT JOIN seasons ss ON ss.series_id = s.id
-        LEFT JOIN episodes e ON e.series_id = s.id
-        WHERE s.is_animated=1
-        ${seriesConds.length > 0 ? 'AND ' + seriesConds.join(' AND ') : ''}
-        GROUP BY s.id
-        ORDER BY s.title ASC
-      `).all(...seriesParams);
-      seriesList = rawSeries.map(deserializeSeries);
     }
 
     // Fetch franchises
@@ -101,10 +114,11 @@ libraryRouter.get('/', async (req, res) => {
       SELECT f.*, COUNT(m.id) as item_count
       FROM franchises f
       LEFT JOIN media_items m ON m.franchise_id = f.id
+      WHERE 1=1 ${franchiseWhere}
       GROUP BY f.id
       HAVING item_count > 0
       ORDER BY f.name ASC
-    `).all();
+    `).all(...franchiseParams);
     const franchises: Franchise[] = rawFranchises.map((f) => ({
       id: f.id as number,
       name: f.name as string,

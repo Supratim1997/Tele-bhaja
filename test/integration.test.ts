@@ -186,6 +186,33 @@ async function run() {
     const hiLib = JSON.parse(hiRes.body);
     assert(hiLib.movies.some((m: any) => m.title.includes('3 Idiots')), 'Language filter for "hi" returns 3 Idiots');
 
+    // Test 3b: Search functionality (title, multi-word, year, franchise, episode title)
+    const searchRes1 = await makeRequest(server, '/api/library?search=Inception');
+    assert(searchRes1.status === 200, 'GET /api/library?search=Inception returns 200');
+    const searchLib1 = JSON.parse(searchRes1.body);
+    assert(searchLib1.movies.some((m: any) => m.title.includes('Inception')), 'Search for "Inception" returns Inception movie');
+
+    const searchResYear = await makeRequest(server, '/api/library?search=Inception%202010');
+    assert(searchResYear.status === 200, 'GET /api/library?search=Inception%202010 returns 200');
+    const searchLibYear = JSON.parse(searchResYear.body);
+    assert(searchLibYear.movies.some((m: any) => m.title.includes('Inception')), 'Search for "Inception 2010" (title + year) returns Inception');
+
+    const searchResHp = await makeRequest(server, '/api/library?search=Harry%20Potter');
+    assert(searchResHp.status === 200, 'GET /api/library?search=Harry%20Potter returns 200');
+    const searchLibHp = JSON.parse(searchResHp.body);
+    assert(searchLibHp.movies.length >= 2, `Search for franchise "Harry Potter" returns ${searchLibHp.movies.length} movies (expected >= 2)`);
+    assert(searchLibHp.franchises.length >= 1, 'Search for franchise "Harry Potter" returns matching franchise card');
+
+    const searchResSeries = await makeRequest(server, '/api/library?search=Breaking%20Bad');
+    assert(searchResSeries.status === 200, 'GET /api/library?search=Breaking%20Bad returns 200');
+    const searchLibSeries = JSON.parse(searchResSeries.body);
+    assert(searchLibSeries.series.some((s: any) => s.title.includes('Breaking Bad')), 'Search for "Breaking Bad" returns series');
+
+    const searchResEp = await makeRequest(server, '/api/library?search=Pilot');
+    assert(searchResEp.status === 200, 'GET /api/library?search=Pilot returns 200');
+    const searchLibEp = JSON.parse(searchResEp.body);
+    assert(searchLibEp.series.some((s: any) => s.title.includes('Breaking Bad')), 'Search for episode title "Pilot" returns Breaking Bad series');
+
     // Test 4: Franchise grouping
     const franRes = await makeRequest(server, '/api/franchises');
     assert(franRes.status === 200, 'GET /api/franchises returns 200');

@@ -158,17 +158,27 @@ const Home: React.FC = () => {
         <div className="space-y-3">
           {/* Search */}
           <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
               id="search-input"
-              type="search"
-              placeholder="Search movies, series…"
+              type="text"
+              placeholder="Search movies, series, franchises, year…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 text-sm focus:outline-none focus:border-brand-600 transition-colors"
+              className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 text-sm focus:outline-none focus:border-brand-600 transition-colors"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-surface-700 hover:bg-surface-600 flex items-center justify-center text-surface-400 hover:text-white text-xs transition-colors"
+                title="Clear search"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
           {/* Category pills */}
@@ -263,11 +273,13 @@ const Home: React.FC = () => {
         )}
 
         {/* ── Franchises ───────────────────────────────────────────────────── */}
-        {showFranchises && data && data.franchises.length > 0 && !debouncedSearch && (
+        {showFranchises && data && data.franchises.length > 0 && (
           <section>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="section-title">🎭 Franchise Collections</h2>
-              {data.franchises.length > 3 && (
+              <h2 className="section-title">
+                {debouncedSearch ? '🎭 Matching Franchises' : '🎭 Franchise Collections'}
+              </h2>
+              {data.franchises.length > 3 && !debouncedSearch && (
                 <button
                   className="text-brand-400 text-sm font-medium hover:text-brand-300"
                   onClick={() => setCategory('franchise')}
@@ -293,11 +305,11 @@ const Home: React.FC = () => {
         )}
 
         {/* ── Movies ──────────────────────────────────────────────────────── */}
-        {showMovies && (
+        {showMovies && (!debouncedSearch || (data && data.movies.length > 0) || loading) && (
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="section-title">
-                {category === 'animated' ? '✨ Animated Films' : '🎬 Movies'}
+                {debouncedSearch ? '🎬 Movies' : (category === 'animated' ? '✨ Animated Films' : '🎬 Movies')}
               </h2>
               {data && (
                 <span className="text-surface-500 text-sm">{data.movies.length} titles</span>
@@ -324,11 +336,11 @@ const Home: React.FC = () => {
         )}
 
         {/* ── Series ──────────────────────────────────────────────────────── */}
-        {showSeries && (
+        {showSeries && (!debouncedSearch || (data && data.series.length > 0) || loading) && (
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="section-title">
-                {category === 'animated' ? '✨ Animated Series' : '📺 TV Series'}
+                {debouncedSearch ? '📺 TV Series' : (category === 'animated' ? '✨ Animated Series' : '📺 TV Series')}
               </h2>
               {data && (
                 <span className="text-surface-500 text-sm">{data.series.length} shows</span>
@@ -356,27 +368,49 @@ const Home: React.FC = () => {
 
         {/* ── Library stats / empty state ───────────────────────────────────── */}
         {!loading && data && data.movies.length === 0 && data.series.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-20 h-20 rounded-full bg-surface-800 flex items-center justify-center mb-4">
-              <svg className="w-10 h-10 text-surface-600" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z" />
-              </svg>
-            </div>
-            <h3 className="text-white font-semibold text-lg mb-2">Library is empty</h3>
-            <p className="text-surface-400 text-sm max-w-xs mb-6">
-              Your media storage path hasn't been scanned yet, or no supported files were found.
-            </p>
-            <button
-              id="start-scan-btn"
-              className="flex items-center gap-2 px-6 py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-full font-semibold transition-colors shadow-lg"
-              onClick={() => void startScan()}
-              disabled={scanStatus?.running}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              {scanStatus?.running ? 'Scanning…' : 'Scan Library'}
-            </button>
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            {debouncedSearch ? (
+              <>
+                <div className="w-16 h-16 rounded-full bg-surface-800 flex items-center justify-center mb-4 text-2xl">
+                  🔍
+                </div>
+                <h3 className="text-white font-semibold text-lg mb-1">
+                  No results found for &ldquo;{debouncedSearch}&rdquo;
+                </h3>
+                <p className="text-surface-400 text-sm max-w-sm mb-4">
+                  Check your spelling or try searching for another title, year, franchise, or keyword.
+                </p>
+                <button
+                  className="px-4 py-2 bg-surface-700 hover:bg-surface-600 text-white rounded-full text-sm font-medium transition-colors"
+                  onClick={() => setSearch('')}
+                >
+                  Clear search
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="w-20 h-20 rounded-full bg-surface-800 flex items-center justify-center mb-4">
+                  <svg className="w-10 h-10 text-surface-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8 12.5v-9l6 4.5-6 4.5z" />
+                  </svg>
+                </div>
+                <h3 className="text-white font-semibold text-lg mb-2">Library is empty</h3>
+                <p className="text-surface-400 text-sm max-w-xs mb-6">
+                  Your media storage path hasn&apos;t been scanned yet, or no supported files were found.
+                </p>
+                <button
+                  id="start-scan-btn"
+                  className="flex items-center gap-2 px-6 py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-full font-semibold transition-colors shadow-lg"
+                  onClick={() => void startScan()}
+                  disabled={scanStatus?.running}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {scanStatus?.running ? 'Scanning…' : 'Scan Library'}
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
