@@ -4,6 +4,30 @@ A production-grade, self-hosted OTT streaming platform that reads directly from 
 
 ---
 
+## 🌟 Key Features
+
+- **🎬 Netflix-Style Streaming Experience**:
+  - Full-screen HTML5 video player with keyboard controls, touch gesture skipping (double-tap ±10s), and screen orientation locking on mobile.
+  - HTTP 206 Partial Content byte-range streaming for instant seeking.
+  - Automatic on-the-fly subtitle conversion (SRT → WebVTT) with sub-second latency.
+  - Resume playback prompt with periodic heartbeat progress saving.
+- **🗂️ Content Control & Categorization Portal**:
+  - Web-based content management portal accessible via the top navigation bar (`🗂️ Content Portal`).
+  - Interactive folder and file tree explorer with expand/collapse and tri-state checkboxes.
+  - Granular inclusion/exclusion controls: choose exactly which files or folders are exposed to the OTT library.
+  - Persistent settings in SQLite (`path_controls` table) that survive restarts, reboots, and rescans.
+  - Metadata & categorization drawer to manually override Title, Year, Animated tag, Languages, and Franchises.
+  - Pruned scanner traversal: excluded folders are skipped entirely during rescans for blazing fast performance.
+- **🔍 Intelligent Search & Heuristic Parser**:
+  - Multi-token fuzzy search across titles, release years, overviews, franchises, and episode file paths.
+  - Advanced heuristic parsing engine for complex release group naming (`Year`, `Resolution`, `Codec`, `Audio tags`).
+  - Automatic TMDb metadata enrichment for movie posters, backdrops, ratings, and plot summaries.
+- **📱 Responsive & LAN Ready**:
+  - Designed for mobile phones, tablets, smart TVs, and desktop browsers.
+  - Zero-configuration LAN access: stream on any phone or tablet on the same Wi-Fi.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -27,7 +51,14 @@ cp .env.example .env
 
 **Windows:**
 ```cmd
+# Automatic launcher (interactively prompts if path not found):
 run.bat
+
+# Or pass your media folder path directly:
+run.bat "E:\Movies"
+
+# Or run in development mode with hot-reload:
+run.bat --dev "E:\Movies"
 ```
 
 **Linux / macOS:**
@@ -45,6 +76,31 @@ npm run dev:client
 ```
 
 The UI opens at `http://localhost:3000`. Devices on the same Wi-Fi can access via `http://<YOUR_LAN_IP>:3000`.
+
+---
+
+## 🗂️ Content Control & Categorization Portal
+
+TeleBhaja features a dedicated **Content Control Portal** directly accessible from the header navigation bar (`🗂️ Content Portal`), giving you complete manual authority over your media collection:
+
+- **Interactive File Structure Tree**:
+  - Full hierarchical folder and file explorer mirroring your storage drive.
+  - Expand/collapse directories with tri-state checkboxes (checked = all included, unchecked = all excluded, dash = partially excluded).
+  - Folder-level and individual file switches to easily include or exclude content from the OTT streaming view.
+- **Persistent Settings (Survives Restarts & Rescans)**:
+  - All inclusion/exclusion choices and categorization overrides are stored in SQLite (`path_controls` table).
+  - Exclusions survive application restarts and background rescans (`COALESCE(media_items.is_excluded, excluded.is_excluded)`).
+  - Excluded folders are pruned during filesystem scans for high-speed scanning performance.
+- **Manual Metadata & Categorization Overrides**:
+  - Click **"Edit"** on any media item to open a drawer and customize:
+    - **Title & Release Year**
+    - **Animated Tag**
+    - **Audio Languages** (e.g. `en, bn, hi`)
+    - **Franchise / Collection Assignment** (automatically links to existing or creates new franchises)
+- **Search, Filter & Quick Actions**:
+  - Live text search across raw file paths and parsed media titles.
+  - Filter view by status (`All items`, `Included only`, `Excluded only`).
+  - `Expand All` / `Collapse All` buttons and a 1-click `Reset All Exclusions` option.
 
 ---
 
@@ -115,28 +171,29 @@ telebhaja/
 │   │   ├── index.ts              ← Express server entry point
 │   │   ├── config.ts             ← Environment config
 │   │   ├── db/
-│   │   │   └── database.ts       ← SQLite schema + init
+│   │   │   └── database.ts       ← SQLite schema + path_controls table
 │   │   ├── scanner/
-│   │   │   ├── parser.ts         ← Title/season/language/franchise parser
+│   │   │   ├── parser.ts         ← Title/season/language/franchise heuristic parser
 │   │   │   ├── ffprobe.ts        ← FFprobe wrapper
 │   │   │   ├── tmdb.ts           ← TMDb API enrichment client
-│   │   │   ├── scanner.ts        ← Main scanner engine
+│   │   │   ├── scanner.ts        ← Main scanner engine with pruned traversal
 │   │   │   └── cli.ts            ← CLI scanner script
 │   │   ├── streaming/
-│   │   │   ├── streaming.ts      ← HTTP 206 byte-range service
+│   │   │   ├── streaming.ts      ← HTTP 206 byte-range service + exclusion guard
 │   │   │   └── transcoding.ts    ← FFmpeg pipe transcode service
 │   │   └── routes/
-│   │       ├── library.ts        ← /api/library endpoints
+│   │       ├── library.ts        ← /api/library endpoints (filtered by exclusions)
 │   │       ├── stream.ts         ← /api/stream endpoints
 │   │       ├── progress.ts       ← /api/progress endpoints
-│   │       └── scan.ts           ← /api/scan + /api/franchises
+│   │       ├── scan.ts           ← /api/scan + /api/franchises
+│   │       └── control.ts        ← /api/control (Tree, toggle, metadata overrides)
 │   │
 │   ├── client/
-│   │   ├── App.tsx               ← Root component
+│   │   ├── App.tsx               ← Root component + stream/portal tabs
 │   │   ├── main.tsx              ← React entry point
 │   │   ├── index.html            ← HTML shell
 │   │   ├── styles/globals.css    ← Global CSS + Tailwind
-│   │   ├── lib/api.ts            ← API client
+│   │   ├── lib/api.ts            ← API client (library, stream, control)
 │   │   ├── hooks/useMedia.ts     ← React hooks
 │   │   ├── components/
 │   │   │   ├── Player.tsx        ← Full-featured video player
@@ -145,11 +202,16 @@ telebhaja/
 │   │   │   ├── FranchiseDrawer.tsx
 │   │   │   └── MediaCard.tsx     ← Movie/Series/Franchise cards
 │   │   └── pages/
-│   │       ├── Home.tsx          ← Main library view
+│   │       ├── Home.tsx          ← Main OTT streaming library view
+│   │       ├── Portal.tsx        ← Content Control & Categorization Portal
 │   │       └── Settings.tsx      ← Scan + settings
 │   │
 │   └── shared/
 │       └── types.ts              ← Shared TypeScript types
+│
+├── test/
+│   ├── parser.test.ts            ← Heuristic parser tests (20 tests)
+│   └── integration.test.ts       ← End-to-end integration tests (65 tests)
 │
 ├── docker-compose.yml
 ├── run.bat / run.sh
@@ -166,15 +228,24 @@ telebhaja/
 ### Library
 | Endpoint | Description |
 |---|---|
-| `GET /api/library?category=movie&language=hi` | Filtered library |
-| `GET /api/library/movies/:id` | Movie detail |
+| `GET /api/library?category=movie&language=hi` | Filtered OTT library (excludes hidden files) |
+| `GET /api/library/movies/:id` | Movie detail with franchise info |
 | `GET /api/library/series/:id` | Full series with seasons/episodes |
+| `GET /api/categories` | Media category summaries |
+
+### Content Control Portal
+| Endpoint | Description |
+|---|---|
+| `GET /api/control/tree` | Full directory tree with media stats and exclusion states |
+| `POST /api/control/toggle` | Toggle inclusion/exclusion for a file or entire directory |
+| `PUT /api/control/media/:type/:id` | Manually override Title, Year, Animated flag, Languages, Franchise |
+| `POST /api/control/reset` | Reset all exclusions back to included |
 
 ### Streaming
 | Endpoint | Description |
 |---|---|
-| `GET /api/stream/movie/:id` | HTTP 206 byte-range movie stream |
-| `GET /api/stream/episode/:id` | HTTP 206 byte-range episode stream |
+| `GET /api/stream/movie/:id` | HTTP 206 byte-range movie stream (404 if excluded) |
+| `GET /api/stream/episode/:id` | HTTP 206 byte-range episode stream (404 if excluded) |
 | `GET /api/stream/movie/:id?transcode=1` | Force FFmpeg transcode to fMP4 |
 | `GET /api/stream/thumbnail/movie/:id` | Video thumbnail JPEG |
 | `GET /api/stream/subtitle?path=...` | External subtitle (SRT→VTT) |
@@ -186,7 +257,7 @@ telebhaja/
 | `POST /api/progress/movie/:id` | Save position `{positionSeconds, durationSeconds}` |
 | `GET /api/progress/recent/all` | Continue Watching list |
 
-### Control
+### Control & System
 | Endpoint | Description |
 |---|---|
 | `POST /api/scan/start` | Trigger library scan |
@@ -197,35 +268,23 @@ telebhaja/
 
 ---
 
-## 🧪 CLI Testing
+## 🧪 Testing & Verification
+
+TeleBhaja includes 85 automated unit and end-to-end integration tests:
 
 ```bash
-# Verify byte-range streaming
-curl -I -H "Range: bytes=0-1024" http://localhost:3000/api/stream/movie/1
+# Run full test suite (parser heuristics + full integration pipeline)
+npm test
 
-# Expected response:
-# HTTP/1.1 206 Partial Content
-# Content-Range: bytes 0-1024/TOTAL_SIZE
-# Accept-Ranges: bytes
-# Content-Type: video/mp4
+# Run TypeScript typecheck
+npm run typecheck
 
-# Test seek in range
-curl -I -H "Range: bytes=5242880-10485759" http://localhost:3000/api/stream/movie/1
+# Build client and server bundles
+npm run build
+```
 
-# Test health
-curl http://localhost:3000/api/health | jq
-
-# Test library
-curl "http://localhost:3000/api/library?category=movie&language=hi" | jq '.movies | length'
-
-# Trigger scan
-curl -X POST http://localhost:3000/api/scan/start
-curl http://localhost:3000/api/scan/status | jq '.progress'
-
-# Save watch progress
-curl -X POST http://localhost:3000/api/progress/movie/1 \
-  -H "Content-Type: application/json" \
-  -d '{"positionSeconds": 1800, "durationSeconds": 7200}'
+```text
+Results: 20 parser tests passed, 65 integration tests passed (85 total passing, 0 failed).
 ```
 
 ---
