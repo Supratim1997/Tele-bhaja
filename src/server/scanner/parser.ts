@@ -427,10 +427,26 @@ function detectFranchise(fullPath: string, title: string): string | undefined {
     if (pattern.test(combined)) return franchise;
   }
 
-  // 2. Folder name matching "... [Collection]" or "... Collection"
-  const collectionMatch = fullPath.match(/([^\/\\]+?)\s*(?:\[Collection\]|Collection|Franchise|Universe|Saga)/i);
-  if (collectionMatch) {
-    return cleanTitle(collectionMatch[1]);
+  // 2. Folder name matching explicit franchise collection naming:
+  // e.g. "Heroic Journey [Collection]" or "Alien Collection",
+  // but NOT overarching category folders like "Collections - Classic Cinema" or "Collections - Anthology"
+  const segments = fullPath.replace(/\\/g, '/').split('/').filter(Boolean);
+  for (const seg of segments) {
+    // Ignore folders starting with "Collection" or "Collections" (generic categorization folders)
+    if (/^\s*collections?\b/i.test(seg)) continue;
+
+    // Check for [Collection], [Franchise], [Universe], [Saga]
+    const bracketMatch = seg.match(/^(.+?)\s*\[(?:Collection|Franchise|Universe|Saga)\]/i);
+    if (bracketMatch) {
+      return cleanTitle(bracketMatch[1]);
+    }
+
+    // Check for folder ending with "Collection", "Franchise", "Universe", or "Saga"
+    // e.g. "The Dark Knight Collection"
+    const suffixMatch = seg.match(/^(.+?)\s+(?:Collection|Franchise|Universe|Saga)$/i);
+    if (suffixMatch) {
+      return cleanTitle(suffixMatch[1]);
+    }
   }
 
   return undefined;

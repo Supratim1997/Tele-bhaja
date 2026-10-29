@@ -1,15 +1,225 @@
 import { Router } from 'express';
+import path from 'path';
 import { getDb } from '../db/database.js';
-import type { MediaItem, Series, Episode, Franchise, LibraryResponse, CategorySummary, Language } from '../../shared/types.js';
+import { config } from '../config.js';
+import type {
+  MediaItem, Series, Episode, Franchise, LibraryResponse,
+  CategorySummary, Language, StorageDrive, DriveBrowseItem, DriveBrowseResponse,
+} from '../../shared/types.js';
 
 export const libraryRouter = Router();
+
+export async function getStorageDrives(): Promise<StorageDrive[]> {
+  const db = getDb();
+  const configured = config.mediaStoragePaths;
+  const drives: StorageDrive[] = [];
+  const seenPaths = new Set<string>();
+
+  for (let i = 0; i < configured.length; i++) {
+    const rawPath = configured[i];
+    const normPath = path.resolve(rawPath);
+    const key = normPath.toLowerCase();
+    if (seenPaths.has(key)) continue;
+    seenPaths.add(key);
+
+    const isPrimary = i === 0;
+    const driveLetterMatch = normPath.match(/^([a-zA-Z]:)/);
+    const driveLetter = driveLetterMatch ? driveLetterMatch[1].toUpperCase() : '';
+    const baseFolderName = path.basename(normPath) || driveLetter;
+
+    const label = isPrimary
+      ? `Primary Drive (${driveLetter || normPath})`
+      : `Drive ${driveLetter ? driveLetter + ' ' : ''}(${baseFolderName})`;
+    const shortLabel = isPrimary
+      ? `💾 Primary (${driveLetter || 'D1'})`
+      : `💾 Drive ${driveLetter || ('D' + (i + 1))}`;
+
+    const pat1 = `${normPath}%`;
+    const pat2 = `${normPath.replace(/\\/g, '/')}%`;
+
+    const movieCountRow = await db.prepare(`
+      SELECT COUNT(*) as c FROM media_items
+      WHERE is_excluded = 0 AND (file_path LIKE ? OR file_path LIKE ?)
+    `).get(pat1, pat2);
+
+    const seriesCountRow = await db.prepare(`
+      SELECT COUNT(DISTINCT s.id) as c FROM series s
+      JOIN episodes e ON e.series_id = s.id
+      WHERE s.is_excluded = 0 AND (e.file_path LIKE ? OR e.file_path LIKE ?)
+    `).get(pat1, pat2);
+
+    drives.push({
+      id: `drive_${i}`,
+      label,
+      shortLabel,
+      path: normPath,
+      isPrimary,
+      movieCount: Number(movieCountRow?.c ?? 0),
+      seriesCount: Number(seriesCountRow?.c ?? 0),
+    });
+  }
+
+  // Also check if database contains files on other drives not explicitly in config
+  try {
+    const otherRoots = await db.prepare(`
+      SELECT DISTINCT SUBSTR(file_path, 1, 2) as d
+      FROM media_items
+      WHERE file_path LIKE '_:\\%'
+    `).all();
+
+    for (const r of otherRoots) {
+      const dLetter = String(r.d ?? '').toUpperCase();
+      if (!dLetter || drives.some((d) => d.path.toUpperCase().startsWith(dLetter))) continue;
+      const pat = `${dLetter}\\%`;
+      const patSlash = `${dLetter}/%`;
+      const mCount = await db.prepare('SELECT COUNT(*) as c FROM media_items WHERE is_excluded = 0 AND (file_path LIKE ? OR file_path LIKE ?)').get(pat, patSlash);
+      const sCount = await db.prepare('SELECT COUNT(DISTINCT s.id) as c FROM series s JOIN episodes e ON e.series_id = s.id WHERE s.is_excluded = 0 AND (e.file_path LIKE ? OR e.file_path LIKE ?)').get(pat, patSlash);
+      drives.push({
+        id: `drive_${drives.length}`,
+        label: `Drive ${dLetter}`,
+        shortLabel: `💾 Drive ${dLetter}`,
+        path: `${dLetter}\\`,
+        isPrimary: drives.length === 0,
+        movieCount: Number(mCount?.c ?? 0),
+        seriesCount: Number(sCount?.c ?? 0),
+      });
+    }
+  } catch {}
+
+  return drives;
+}
+
+// ── GET /api/library/drives ────────────────────────────────────────────────
+libraryRouter.get('/drives', async (_req, res) => {
+  try {
+    const drives = await getStorageDrives();
+    res.json(drives);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ── GET /api/library/browse ────────────────────────────────────────────────
+libraryRouter.get('/browse', async (req, res) => {
+  try {
+    const db = getDb();
+    const { drive: driveParam, subpath: subpathParam } = req.query as Record<string, string>;
+    const drives = await getStorageDrives();
+
+    const targetDrive = drives.find((d) => d.id === driveParam || d.path.toLowerCase() === (driveParam ?? '').toLowerCase())
+      ?? (drives.length > 1 ? drives[1] : drives[0]);
+
+    if (!targetDrive) {
+      res.status(404).json({ error: 'No storage drive found' });
+      return;
+    }
+
+    const driveRoot = path.resolve(targetDrive.path);
+    let currentFolder = driveRoot;
+    if (subpathParam && subpathParam.trim()) {
+      const resolved = path.resolve(subpathParam.trim());
+      if (resolved.toLowerCase().startsWith(driveRoot.toLowerCase())) {
+        currentFolder = resolved;
+      }
+    }
+
+    // Compute breadcrumbs
+    const rel = path.relative(driveRoot, currentFolder);
+    const breadcrumbs: Array<{ name: string; path: string }> = [
+      { name: targetDrive.shortLabel || targetDrive.label, path: driveRoot },
+    ];
+    if (rel && rel !== '.') {
+      const parts = rel.split(path.sep).filter(Boolean);
+      let acc = driveRoot;
+      for (const part of parts) {
+        acc = path.join(acc, part);
+        breadcrumbs.push({ name: part, path: acc });
+      }
+    }
+
+    const normCurrent = currentFolder.replace(/\\/g, '/').toLowerCase();
+    const pat1 = `${currentFolder}%`;
+    const pat2 = `${currentFolder.replace(/\\/g, '/')}%`;
+
+    const allMovies = await db.prepare(`
+      SELECT id, title, file_path, file_size, duration, year, poster_path, mime_type, needs_transcode
+      FROM media_items
+      WHERE is_excluded = 0 AND (file_path LIKE ? OR file_path LIKE ?)
+    `).all(pat1, pat2);
+
+    const allEpisodes = await db.prepare(`
+      SELECT e.id, e.title, e.file_path, e.file_size, e.duration, s.year, s.poster_path, e.mime_type, e.needs_transcode
+      FROM episodes e
+      JOIN series s ON s.id = e.series_id
+      WHERE e.is_excluded = 0 AND (e.file_path LIKE ? OR e.file_path LIKE ?)
+    `).all(pat1, pat2);
+
+    const folderMap = new Map<string, { name: string; path: string; count: number }>();
+    const directFiles: DriveBrowseItem[] = [];
+
+    const checkFile = (row: Record<string, unknown>, isSeries: boolean) => {
+      const fp = String(row.file_path);
+      const fileDir = path.dirname(fp);
+      const normFileDir = fileDir.replace(/\\/g, '/').toLowerCase();
+
+      if (normFileDir === normCurrent) {
+        directFiles.push({
+          id: Number(row.id),
+          title: String(row.title ?? path.basename(fp)),
+          filePath: fp,
+          fileSize: Number(row.file_size ?? 0),
+          duration: row.duration ? Number(row.duration) : undefined,
+          year: row.year ? Number(row.year) : undefined,
+          posterPath: row.poster_path ? String(row.poster_path) : undefined,
+          mimeType: String(row.mime_type ?? 'video/mp4'),
+          needsTranscode: Boolean(row.needs_transcode),
+          isSeries,
+        });
+      } else {
+        const relPath = path.relative(currentFolder, fileDir);
+        const topSub = relPath.split(path.sep)[0];
+        if (topSub) {
+          const subFullPath = path.join(currentFolder, topSub);
+          const existing = folderMap.get(topSub.toLowerCase());
+          if (existing) {
+            existing.count++;
+          } else {
+            folderMap.set(topSub.toLowerCase(), {
+              name: topSub,
+              path: subFullPath,
+              count: 1,
+            });
+          }
+        }
+      }
+    };
+
+    for (const m of allMovies) checkFile(m, false);
+    for (const ep of allEpisodes) checkFile(ep, true);
+
+    const folders = Array.from(folderMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    directFiles.sort((a, b) => a.title.localeCompare(b.title));
+
+    res.json({
+      driveId: targetDrive.id,
+      currentPath: currentFolder,
+      breadcrumbs,
+      folders,
+      files: directFiles,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
 
 // ── GET /api/library ───────────────────────────────────────────────────────
 libraryRouter.get('/', async (req, res) => {
   try {
     const db = getDb();
 
-    const { category, language, search, page = '1', limit } = req.query as Record<string, string>;
+    const { category, language, search, page = '1', limit, drive } = req.query as Record<string, string>;
     const pageNum = Math.max(1, parseInt(page, 10));
     // If limit is 'all' or not specified, default to 10000 to show full library without truncation
     const isUnlimited = limit === 'all' || limit === '0';
@@ -70,6 +280,19 @@ libraryRouter.get('/', async (req, res) => {
       seriesConds.push(`s.is_animated=1`);
     } else if (category === 'franchise') {
       movieConds.push(`m.franchise_id IS NOT NULL`);
+    }
+
+    if (drive && drive !== 'all') {
+      const allDrives = await getStorageDrives();
+      const matched = allDrives.find((d) => d.id === drive || d.path.toLowerCase().startsWith(drive.toLowerCase()) || drive.toLowerCase().startsWith(d.path.toLowerCase()));
+      if (matched) {
+        const dPat1 = `${matched.path}%`;
+        const dPat2 = `${matched.path.replace(/\\/g, '/')}%`;
+        movieConds.push(`(m.file_path LIKE ? OR m.file_path LIKE ?)`);
+        movieParams.push(dPat1, dPat2);
+        seriesConds.push(`s.id IN (SELECT DISTINCT series_id FROM episodes WHERE file_path LIKE ? OR file_path LIKE ?)`);
+        seriesParams.push(dPat1, dPat2);
+      }
     }
 
     const movieWhere = movieConds.length > 0 ? `WHERE ${movieConds.join(' AND ')}` : '';

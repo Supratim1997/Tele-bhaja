@@ -8,9 +8,10 @@ interface MovieCardProps {
   movie: MediaItem;
   onClick: () => void;
   progress?: number; // 0-100
+  className?: string;
 }
 
-export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress }) => {
+export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress, className }) => {
   const [thumbError, setThumbError] = useState(false);
 
   const posterUrl = movie.posterPath ?? api.stream.thumbnailMovieUrl(movie.id);
@@ -18,7 +19,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress }
   return (
     <div
       id={`movie-card-${movie.id}`}
-      className="media-card flex-shrink-0 w-32 md:w-40"
+      className={`media-card ${className ?? 'w-full'}`}
       onClick={onClick}
     >
       {/* Poster */}
@@ -91,15 +92,16 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress }
 interface SeriesCardProps {
   series: Series;
   onClick: () => void;
+  className?: string;
 }
 
-export const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick }) => {
+export const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, className }) => {
   const [thumbError, setThumbError] = useState(false);
 
   return (
     <div
       id={`series-card-${series.id}`}
-      className="media-card flex-shrink-0 w-32 md:w-40"
+      className={`media-card ${className ?? 'w-full'}`}
       onClick={onClick}
     >
       <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-surface-800">
@@ -191,9 +193,9 @@ export const FranchiseBanner: React.FC<FranchiseBannerProps> = ({
 
 // ─── Skeleton Card ────────────────────────────────────────────────────────────
 
-export const SkeletonCard: React.FC = () => (
-  <div className="flex-shrink-0 w-32 md:w-40">
+export const SkeletonCard: React.FC<{ className?: string }> = ({ className }) => (
+  <div className={className ?? 'w-full'}>
     <div className="skeleton aspect-[2/3] rounded-xl" />
-    <div className="skeleton h-3 rounded mt-1.5 w-3/4" />
+    <div className="skeleton h-3 rounded mt-2 w-3/4" />
   </div>
 );

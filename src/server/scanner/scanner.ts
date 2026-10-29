@@ -31,9 +31,14 @@ export class MediaScanner extends EventEmitter {
     return { ...this._status };
   }
 
-  async scan(rootPath: string, options: { force?: boolean } = {}): Promise<void> {
+  async scan(targetPaths: string | string[], options: { force?: boolean } = {}): Promise<void> {
     if (this._status.running) {
       throw new Error('Scan already in progress');
+    }
+
+    const paths = (Array.isArray(targetPaths) ? targetPaths : [targetPaths]).map((p) => p.trim()).filter(Boolean);
+    if (paths.length === 0) {
+      throw new Error('No storage paths provided for scanning');
     }
 
     const force = Boolean(options.force);
@@ -53,11 +58,20 @@ export class MediaScanner extends EventEmitter {
     this.emit('status', this._status);
 
     try {
-      if (!fs.existsSync(rootPath)) {
-        throw new Error(`Media storage path does not exist: ${rootPath}`);
+      const validPaths: string[] = [];
+      for (const p of paths) {
+        if (fs.existsSync(p)) {
+          validPaths.push(p);
+        } else {
+          this.emit('log', `Warning: Storage path does not exist: ${p}`);
+        }
       }
 
-      this.emit('log', `Collecting files from ${rootPath}...`);
+      if (validPaths.length === 0) {
+        throw new Error(`None of the provided storage paths exist: ${paths.join('; ')}`);
+      }
+
+      this.emit('log', `Collecting files from ${validPaths.length} drive location(s)...`);
       const controlsRows = await db.prepare('SELECT path, is_directory FROM path_controls WHERE is_excluded = 1').all();
       const excludedDirSet = new Set<string>();
       const excludedFileSet = new Set<string>();
@@ -70,9 +84,12 @@ export class MediaScanner extends EventEmitter {
         }
       }
 
-      const allFiles = this.collectFiles(rootPath, excludedDirSet, excludedFileSet);
+      const allFiles: string[] = [];
+      for (const vp of validPaths) {
+        allFiles.push(...this.collectFiles(vp, excludedDirSet, excludedFileSet));
+      }
       this._status.totalFound = allFiles.length;
-      this.emit('log', `Found ${allFiles.length} media files`);
+      this.emit('log', `Found ${allFiles.length} media files across ${validPaths.length} drive(s)`);
       this.emit('status', this._status);
 
       for (let i = 0; i < allFiles.length; i++) {
@@ -93,6 +110,12 @@ export class MediaScanner extends EventEmitter {
 
       this.emit('log', 'Resolving franchise collections...');
       await this.resolveFranchises();
+
+      this.emit('log', 'Pruning missing media files...');
+      const pruned = await this.pruneMissingMedia();
+      if (pruned.movies > 0 || pruned.episodes > 0) {
+        this.emit('log', `Pruned ${pruned.movies} missing movies and ${pruned.episodes} missing episodes.`);
+      }
 
       const completedAt = new Date().toISOString();
       this._status.running = false;
@@ -195,6 +218,43 @@ export class MediaScanner extends EventEmitter {
     }
 
     const parsed = parseMediaPath(filePath);
+
+    // Apply parent folder categorization rules if defined in path_controls
+    const normFilePath = filePath.replace(/\\/g, '/');
+    const folderRule = await db.prepare(`
+      SELECT category_type, category_name, is_animated, languages
+      FROM path_controls
+      WHERE is_directory = 1 AND category_type IS NOT NULL
+        AND (? = path OR ? LIKE path || '/%' OR ? LIKE path || '\\%')
+      ORDER BY LENGTH(path) DESC LIMIT 1
+    `).get(normFilePath, normFilePath, filePath);
+
+    if (folderRule) {
+      if (folderRule.category_type === 'series') {
+        parsed.isSeries = true;
+        if (folderRule.category_name) {
+          parsed.title = String(folderRule.category_name);
+        }
+      } else if (folderRule.category_type === 'franchise') {
+        parsed.isSeries = false;
+        if (folderRule.category_name) {
+          parsed.franchiseHint = String(folderRule.category_name);
+        }
+      } else if (folderRule.category_type === 'movie') {
+        parsed.isSeries = false;
+      }
+
+      if (folderRule.is_animated !== null && folderRule.is_animated !== undefined) {
+        parsed.isAnimated = Number(folderRule.is_animated) === 1;
+      }
+
+      if (folderRule.languages) {
+        try {
+          const ruleLangs: string[] = JSON.parse(String(folderRule.languages));
+          parsed.languages = Array.from(new Set([...parsed.languages, ...ruleLangs]));
+        } catch {}
+      }
+    }
 
     let probe;
     try { probe = await probeFile(filePath); }
@@ -490,6 +550,54 @@ export class MediaScanner extends EventEmitter {
       });
     }
     return tracks;
+  }
+
+  public async pruneMissingMedia(): Promise<{ movies: number; episodes: number }> {
+    const db = getDb();
+    let moviesPruned = 0;
+    let episodesPruned = 0;
+
+    // 1. Check all movies
+    const allMovies = await db.prepare('SELECT id, file_path FROM media_items').all();
+    for (const m of allMovies) {
+      const p = String(m.file_path);
+      if (!fs.existsSync(p)) {
+        await db.execute({ sql: 'DELETE FROM media_items WHERE id = ?', args: [Number(m.id)] });
+        await db.execute({ sql: "DELETE FROM watch_history WHERE media_id = ? AND media_type = 'movie'", args: [Number(m.id)] });
+        moviesPruned++;
+      }
+    }
+
+    // 2. Check all episodes
+    const allEpisodes = await db.prepare('SELECT id, file_path, series_id FROM episodes').all();
+    for (const ep of allEpisodes) {
+      const p = String(ep.file_path);
+      if (!fs.existsSync(p)) {
+        await db.execute({ sql: 'DELETE FROM episodes WHERE id = ?', args: [Number(ep.id)] });
+        await db.execute({ sql: "DELETE FROM watch_history WHERE media_id = ? AND media_type = 'episode'", args: [Number(ep.id)] });
+        episodesPruned++;
+      }
+    }
+
+    // 3. Delete empty seasons
+    await db.execute(`
+      DELETE FROM seasons
+      WHERE id NOT IN (SELECT DISTINCT season_id FROM episodes)
+    `);
+
+    // 4. Delete empty series
+    await db.execute(`
+      DELETE FROM series
+      WHERE id NOT IN (SELECT DISTINCT series_id FROM episodes)
+    `);
+
+    // 5. Delete empty franchises
+    await db.execute(`
+      DELETE FROM franchises
+      WHERE id NOT IN (SELECT DISTINCT franchise_id FROM media_items WHERE franchise_id IS NOT NULL)
+    `);
+
+    return { movies: moviesPruned, episodes: episodesPruned };
   }
 }
 

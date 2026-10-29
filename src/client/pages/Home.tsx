@@ -4,7 +4,8 @@ import { MovieCard, SeriesCard, FranchiseBanner, SkeletonCard } from '../compone
 import MoviePlayerModal from '../components/MoviePlayerModal.js';
 import SeriesDrawer from '../components/SeriesDrawer.js';
 import FranchiseDrawer from '../components/FranchiseDrawer.js';
-import type { MediaItem, Series, ContentCategory } from '../../shared/types.js';
+import DriveFolderBrowser from '../components/DriveFolderBrowser.js';
+import type { MediaItem, Series, ContentCategory, StorageDrive } from '../../shared/types.js';
 import { api, type RecentItem, type RecentEpisodeItem } from '../lib/api.js';
 
 type DrawerState =
@@ -24,6 +25,16 @@ const CATEGORIES = [
 type CategoryKey = typeof CATEGORIES[number]['key'];
 
 const Home: React.FC = () => {
+  const [drives, setDrives] = useState<StorageDrive[]>([]);
+  const [selectedDriveId, setSelectedDriveId] = useState<string>('all');
+  const [driveViewModes, setDriveViewModes] = useState<Record<string, 'ott' | 'folder'>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('telebhaja_drive_views') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
   const [category, setCategory] = useState<CategoryKey>('all');
   const [language, setLanguage] = useState('');
   const [search, setSearch] = useState('');
@@ -33,10 +44,36 @@ const Home: React.FC = () => {
 
   const debouncedSearch = useDebounce(search, 350);
 
+  // Load drives
+  useEffect(() => {
+    api.drives.list().then((list) => {
+      setDrives(list);
+      if (list.length > 0 && selectedDriveId === 'all') {
+        const primary = list.find((d) => d.isPrimary) || list[0];
+        setSelectedDriveId(primary.id);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const currentDrive = drives.find((d) => d.id === selectedDriveId) || drives[0];
+  const isPrimary = currentDrive ? currentDrive.isPrimary : true;
+  const currentViewMode: 'ott' | 'folder' = isPrimary
+    ? 'ott'
+    : (driveViewModes[selectedDriveId] ?? 'ott');
+
+  const setViewModeForDrive = (driveId: string, mode: 'ott' | 'folder') => {
+    const updated = { ...driveViewModes, [driveId]: mode };
+    setDriveViewModes(updated);
+    try {
+      localStorage.setItem('telebhaja_drive_views', JSON.stringify(updated));
+    } catch {}
+  };
+
   const { data, loading, refetch } = useLibrary({
     category: category === 'all' ? undefined : category,
     language: language || undefined,
     search: debouncedSearch || undefined,
+    drive: selectedDriveId !== 'all' ? selectedDriveId : undefined,
     limit: 10000,
   });
 
@@ -154,6 +191,66 @@ const Home: React.FC = () => {
           </div>
         )}
 
+        {/* ── Drive Switcher Tabs ─────────────────────────────────────────── */}
+        {drives.length > 1 && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-900 border border-surface-800 p-2 sm:p-2.5 rounded-2xl shadow-md">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+              <span className="text-[11px] font-bold text-surface-400 uppercase tracking-wider px-2 flex-shrink-0">Drives:</span>
+              {drives.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => setSelectedDriveId(d.id)}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all flex-shrink-0 ${
+                    selectedDriveId === d.id
+                      ? 'bg-brand-600 text-white font-bold shadow-md shadow-brand-600/30'
+                      : 'bg-surface-800 hover:bg-surface-750 text-surface-300 hover:text-white'
+                  }`}
+                >
+                  <span>{d.shortLabel}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 opacity-80">
+                    {d.movieCount + d.seriesCount}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* View Mode Switcher for Non-Primary Drive */}
+            {!isPrimary && currentDrive && (
+              <div className="flex items-center gap-1 bg-surface-950 p-1 rounded-xl border border-surface-800 self-end sm:self-auto">
+                <span className="text-[11px] text-surface-400 px-1.5 font-medium">View Mode:</span>
+                <button
+                  onClick={() => setViewModeForDrive(currentDrive.id, 'ott')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                    currentViewMode === 'ott'
+                      ? 'bg-brand-600 text-white font-bold shadow'
+                      : 'text-surface-400 hover:text-white'
+                  }`}
+                >
+                  <span>🎬</span> OTT View
+                </button>
+                <button
+                  onClick={() => setViewModeForDrive(currentDrive.id, 'folder')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                    currentViewMode === 'folder'
+                      ? 'bg-brand-600 text-white font-bold shadow'
+                      : 'text-surface-400 hover:text-white'
+                  }`}
+                >
+                  <span>📁</span> Folder View
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Content View (Folder View for Secondary Drives vs Full OTT View) ── */}
+        {!isPrimary && currentViewMode === 'folder' && currentDrive ? (
+          <DriveFolderBrowser
+            drive={currentDrive}
+            onPlayMovie={(movie) => setDrawer({ type: 'movie', movie })}
+          />
+        ) : (
+          <>
         {/* ── Search + Filters ─────────────────────────────────────────────── */}
         <div className="space-y-3">
           {/* Search */}
@@ -224,7 +321,7 @@ const Home: React.FC = () => {
             <h2 className="section-title mb-3">⏱ Continue Watching</h2>
             <div className="scroll-row">
               {recent.movies.map((item) => (
-                <div key={item.mediaId} className="flex-shrink-0 w-32 md:w-40">
+                <div key={item.mediaId} className="flex-shrink-0 w-36 md:w-44">
                   <MovieCard
                     movie={{
                       id: item.mediaId,
@@ -246,11 +343,12 @@ const Home: React.FC = () => {
                     }}
                     onClick={() => void openMovie(item.mediaId)}
                     progress={item.percentComplete}
+                    className="w-full"
                   />
                 </div>
               ))}
               {recent.episodes.map((item) => (
-                <div key={item.mediaId} className="flex-shrink-0 w-32 md:w-40">
+                <div key={item.mediaId} className="flex-shrink-0 w-36 md:w-44">
                   <SeriesCard
                     series={{
                       id: item.mediaId,
@@ -265,6 +363,7 @@ const Home: React.FC = () => {
                       updatedAt: '',
                     }}
                     onClick={() => setDrawer({ type: 'series', id: item.mediaId })}
+                    className="w-full"
                   />
                 </div>
               ))}
@@ -316,11 +415,11 @@ const Home: React.FC = () => {
               )}
             </div>
             {loading ? (
-              <div className="scroll-row">
-                {[...Array(6)].map((_, i) => <SkeletonCard key={i} />)}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
+                {[...Array(7)].map((_, i) => <SkeletonCard key={i} />)}
               </div>
             ) : data && data.movies.length > 0 ? (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-9 gap-3 md:gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
                 {data.movies.map((movie) => (
                   <MovieCard
                     key={movie.id}
@@ -347,11 +446,11 @@ const Home: React.FC = () => {
               )}
             </div>
             {loading ? (
-              <div className="scroll-row">
-                {[...Array(6)].map((_, i) => <SkeletonCard key={i} />)}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
+                {[...Array(7)].map((_, i) => <SkeletonCard key={i} />)}
               </div>
             ) : data && data.series.length > 0 ? (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-9 gap-3 md:gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
                 {data.series.map((series) => (
                   <SeriesCard
                     key={series.id}
@@ -412,6 +511,8 @@ const Home: React.FC = () => {
               </>
             )}
           </div>
+        )}
+          </>
         )}
       </div>
 

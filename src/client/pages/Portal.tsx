@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../lib/api.js';
-import type { FileTreeNode, ControlStats, MediaOverrideInput } from '../../shared/types.js';
+import type { FileTreeNode, ControlStats, MediaOverrideInput, FolderCategorizeInput } from '../../shared/types.js';
 
 interface EditItemState {
   node: FileTreeNode;
@@ -9,6 +9,15 @@ interface EditItemState {
   isAnimated: boolean;
   languages: string;
   franchiseName: string;
+}
+
+interface FolderEditState {
+  node: FileTreeNode;
+  categoryType: 'series' | 'franchise' | 'movie' | 'none';
+  categoryName: string;
+  isAnimated: boolean;
+  languages: string;
+  applyToChildren: boolean;
 }
 
 export const Portal: React.FC = () => {
@@ -22,10 +31,18 @@ export const Portal: React.FC = () => {
   const [filterMode, setFilterMode] = useState<'all' | 'included' | 'excluded'>('all');
   const [togglingPath, setTogglingPath] = useState<string | null>(null);
 
-  // Edit drawer state
+  // Edit drawer state (file)
   const [editingItem, setEditingItem] = useState<EditItemState | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Folder categorization state
+  const [folderEditingItem, setFolderEditingItem] = useState<FolderEditState | null>(null);
+  const [existingFranchises, setExistingFranchises] = useState<{ id: number; name: string }[]>([]);
+
+  useEffect(() => {
+    api.control.getFranchises().then(setExistingFranchises).catch(() => {});
+  }, []);
 
   // Load tree
   const loadTree = useCallback(async () => {
@@ -185,6 +202,56 @@ export const Portal: React.FC = () => {
       setSavingEdit(false);
     }
   }, [editingItem]);
+
+  // Open folder categorization drawer
+  const openFolderCategorize = useCallback((node: FileTreeNode) => {
+    setFolderEditingItem({
+      node,
+      categoryType: node.categoryType ?? 'none',
+      categoryName: node.categoryName ?? node.name,
+      isAnimated: Boolean(node.isAnimated),
+      languages: node.languages ? node.languages.join(', ') : '',
+      applyToChildren: true,
+    });
+    setSaveSuccess(false);
+  }, []);
+
+  // Save folder categorization
+  const saveFolderCategorize = useCallback(async () => {
+    if (!folderEditingItem) return;
+    setSavingEdit(true);
+    setSaveSuccess(false);
+
+    try {
+      const langs = folderEditingItem.languages
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+
+      await api.control.categorizeFolder({
+        path: folderEditingItem.node.path,
+        categoryType: folderEditingItem.categoryType,
+        categoryName: folderEditingItem.categoryName.trim(),
+        isAnimated: folderEditingItem.isAnimated,
+        languages: langs.length > 0 ? langs : undefined,
+        applyToChildren: folderEditingItem.applyToChildren,
+      });
+
+      setSaveSuccess(true);
+      const res = await api.control.getTree();
+      setTree(res.tree);
+      setStats(res.stats);
+
+      setTimeout(() => {
+        setFolderEditingItem(null);
+        setSaveSuccess(false);
+      }, 1000);
+    } catch (err: unknown) {
+      alert(`Failed to categorize folder: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSavingEdit(false);
+    }
+  }, [folderEditingItem]);
 
   // Format file size
   const formatSize = (bytes?: number) => {
@@ -412,6 +479,7 @@ export const Portal: React.FC = () => {
                 toggleExpand={toggleExpand}
                 handleToggle={handleToggle}
                 openEdit={openEdit}
+                openFolderCategorize={openFolderCategorize}
                 formatSize={formatSize}
                 togglingPath={togglingPath}
                 filterQuery={filterQuery}
@@ -562,6 +630,194 @@ export const Portal: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── Folder Categorization Drawer / Modal ────────────────────────────── */}
+      {folderEditingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="absolute inset-0 modal-backdrop" onClick={() => setFolderEditingItem(null)} />
+          <div className="relative w-full max-w-lg bg-surface-900 border border-surface-700/80 rounded-2xl shadow-2xl p-6 flex flex-col max-h-[90vh] overflow-y-auto animate-scale-in">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-surface-800">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📁</span>
+                <div>
+                  <h3 className="font-display font-bold text-lg text-white">Folder Categorization</h3>
+                  <p className="text-surface-400 text-xs truncate max-w-xs">{folderEditingItem.node.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setFolderEditingItem(null)}
+                className="w-8 h-8 rounded-full bg-surface-800 hover:bg-surface-700 flex items-center justify-center text-surface-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Form */}
+            <div className="py-4 space-y-4 text-sm">
+              <div>
+                <label className="block text-surface-400 text-xs font-medium mb-1.5">Category Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { key: 'none', label: 'Default / Auto-Detect', icon: '⚡' },
+                    { key: 'series', label: 'TV Series', icon: '📺' },
+                    { key: 'franchise', label: 'Franchise Collection', icon: '🎭' },
+                    { key: 'movie', label: 'Movie Collection', icon: '🎬' },
+                  ].map((cat) => (
+                    <button
+                      key={cat.key}
+                      type="button"
+                      onClick={() => setFolderEditingItem({
+                        ...folderEditingItem,
+                        categoryType: cat.key as any,
+                      })}
+                      className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all ${
+                        folderEditingItem.categoryType === cat.key
+                          ? 'bg-brand-950/80 border-brand-500 text-white shadow-lg shadow-brand-950/40'
+                          : 'bg-surface-800/70 border-surface-700/80 text-surface-300 hover:bg-surface-800 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-lg">{cat.icon}</span>
+                      <span className="text-xs font-semibold">{cat.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Franchise / Series Name Input */}
+              {folderEditingItem.categoryType !== 'none' && (
+                <div>
+                  <label className="block text-surface-400 text-xs font-medium mb-1">
+                    {folderEditingItem.categoryType === 'franchise'
+                      ? 'Franchise / Universe Name'
+                      : folderEditingItem.categoryType === 'series'
+                      ? 'Series Title'
+                      : 'Collection Name'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={
+                      folderEditingItem.categoryType === 'franchise'
+                        ? 'e.g. Space Adventures, Crime Saga'
+                        : folderEditingItem.categoryType === 'series'
+                        ? 'e.g. Mystery Series, Documentary Season 1'
+                        : 'e.g. Classic Cinema'
+                    }
+                    value={folderEditingItem.categoryName}
+                    onChange={(e) => setFolderEditingItem({ ...folderEditingItem, categoryName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-surface-800 border border-surface-700 text-white text-sm focus:outline-none focus:border-brand-500"
+                  />
+                  {/* Franchise suggestions */}
+                  {folderEditingItem.categoryType === 'franchise' && existingFranchises.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                      <span className="text-[11px] text-surface-500">Existing:</span>
+                      {existingFranchises.slice(0, 6).map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setFolderEditingItem({ ...folderEditingItem, categoryName: f.name })}
+                          className="px-2 py-0.5 rounded-full bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white text-[10px] border border-surface-700"
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Languages */}
+              <div>
+                <label className="block text-surface-400 text-xs font-medium mb-1">
+                  Languages (comma-separated ISO codes)
+                </label>
+                <input
+                  type="text"
+                  placeholder="en, bn, hi"
+                  value={folderEditingItem.languages}
+                  onChange={(e) => setFolderEditingItem({ ...folderEditingItem, languages: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-surface-800 border border-surface-700 text-white text-sm focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              {/* Animated Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-surface-800/60 border border-surface-700/60">
+                <div>
+                  <p className="text-white text-xs font-semibold">✨ Animated Content</p>
+                  <p className="text-surface-400 text-[11px]">Mark all content in this folder as animated</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFolderEditingItem({ ...folderEditingItem, isAnimated: !folderEditingItem.isAnimated })}
+                  className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                    folderEditingItem.isAnimated ? 'bg-purple-600' : 'bg-surface-700'
+                  }`}
+                >
+                  <div
+                    className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                      folderEditingItem.isAnimated ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Apply to existing files */}
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-surface-800/40 border border-surface-700/40 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={folderEditingItem.applyToChildren}
+                  onChange={(e) => setFolderEditingItem({ ...folderEditingItem, applyToChildren: e.target.checked })}
+                  className="mt-0.5 rounded border-surface-600 text-brand-600 focus:ring-0"
+                />
+                <div>
+                  <p className="text-white text-xs font-medium">Apply to all existing media files inside this folder</p>
+                  <p className="text-surface-400 text-[11px]">
+                    Updates all nested movies or episodes immediately in the OTT library.
+                  </p>
+                </div>
+              </label>
+
+              {saveSuccess && (
+                <div className="p-3 bg-green-900/30 border border-green-800/60 rounded-lg text-green-300 text-xs flex items-center gap-2">
+                  <span>✓</span> Folder categorization saved successfully!
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-4 border-t border-surface-800 flex justify-between gap-2">
+              {Boolean(folderEditingItem.node.categoryType) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFolderEditingItem({ ...folderEditingItem, categoryType: 'none', categoryName: '' });
+                  }}
+                  className="px-3 py-2 rounded-lg bg-red-950/60 hover:bg-red-900 text-red-300 text-xs font-medium border border-red-800/50"
+                >
+                  Clear Rule
+                </button>
+              )}
+              <div className="flex gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setFolderEditingItem(null)}
+                  className="px-4 py-2 rounded-lg bg-surface-800 hover:bg-surface-700 text-surface-300 text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveFolderCategorize()}
+                  disabled={savingEdit}
+                  className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-brand-900/20"
+                >
+                  {savingEdit ? 'Saving…' : 'Save Categorization'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -575,6 +831,7 @@ interface TreeNodeViewProps {
   toggleExpand: (path: string) => void;
   handleToggle: (node: FileTreeNode) => void;
   openEdit: (node: FileTreeNode) => void;
+  openFolderCategorize: (node: FileTreeNode) => void;
   formatSize: (bytes?: number) => string;
   togglingPath: string | null;
   filterQuery: string;
@@ -584,7 +841,7 @@ interface TreeNodeViewProps {
 
 const TreeNodeView: React.FC<TreeNodeViewProps> = ({
   node, depth, expandedPaths, toggleExpand, handleToggle,
-  openEdit, formatSize, togglingPath, filterQuery, filterMode, nodeMatchesFilter,
+  openEdit, openFolderCategorize, formatSize, togglingPath, filterQuery, filterMode, nodeMatchesFilter,
 }) => {
   // If filter active, check if this node or any children match
   const matches = nodeMatchesFilter(node, filterQuery, filterMode);
@@ -703,6 +960,36 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
 
         {/* Status / Categorization Column */}
         <div className="col-span-3 md:col-span-3 flex flex-wrap items-center gap-1">
+          {node.isDirectory && (
+            <>
+              {node.categoryType === 'franchise' && (
+                <span className="badge bg-amber-950/80 text-amber-300 border border-amber-800/50 text-[10px] truncate max-w-[130px]" title={node.categoryName}>
+                  🎭 Franchise: {node.categoryName}
+                </span>
+              )}
+              {node.categoryType === 'series' && (
+                <span className="badge bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 text-[10px] truncate max-w-[130px]" title={node.categoryName}>
+                  📺 Series: {node.categoryName}
+                </span>
+              )}
+              {node.categoryType === 'movie' && (
+                <span className="badge bg-blue-950/80 text-blue-300 border border-blue-800/50 text-[10px]">
+                  🎬 Movies
+                </span>
+              )}
+              {node.isAnimated && (
+                <span className="badge bg-purple-950/80 text-purple-300 border border-purple-800/50 text-[10px]">
+                  ✨ Anim
+                </span>
+              )}
+              {node.languages && node.languages.length > 0 && (
+                <span className="badge bg-sky-950/80 text-sky-300 border border-sky-800/50 text-[10px]">
+                  🌐 {node.languages.join(', ')}
+                </span>
+              )}
+            </>
+          )}
+
           {node.isMedia && (
             <>
               {node.isExcluded ? (
@@ -746,7 +1033,19 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
 
         {/* Actions Column */}
         <div className="col-span-2 md:col-span-1 text-right">
-          {node.isMedia && node.mediaId ? (
+          {node.isDirectory ? (
+            <button
+              onClick={() => openFolderCategorize(node)}
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                node.categoryType
+                  ? 'bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60'
+                  : 'bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white'
+              }`}
+              title="Categorize this folder (Series, Franchise, etc.)"
+            >
+              🏷️ Categorize
+            </button>
+          ) : node.isMedia && node.mediaId ? (
             <button
               onClick={() => openEdit(node)}
               className="px-2 py-1 rounded bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white text-[11px] font-medium transition-colors"
@@ -770,6 +1069,7 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
               toggleExpand={toggleExpand}
               handleToggle={handleToggle}
               openEdit={openEdit}
+              openFolderCategorize={openFolderCategorize}
               formatSize={formatSize}
               togglingPath={togglingPath}
               filterQuery={filterQuery}

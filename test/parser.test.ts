@@ -29,8 +29,8 @@ const testCases: TestCase[] = [
     expectedLanguage: 'bn',
   },
   {
-    path: 'E:/Media/Hindi Movies/3 Idiots (2009) [Hin].mp4',
-    expectedTitle: '3 Idiots',
+    path: 'E:/Media/Hindi Movies/Sample Drama (2009) [Hin].mp4',
+    expectedTitle: 'Sample Drama',
     expectedYear: 2009,
     expectedIsSeries: false,
     expectedLanguage: 'hi',
@@ -45,8 +45,8 @@ const testCases: TestCase[] = [
 
   // 2. Series vs Movies
   {
-    path: 'E:/Media/TV Shows/Breaking Bad/Season 01/Breaking Bad - S01E02 - Cats in the Bag.mkv',
-    expectedTitle: 'Breaking Bad',
+    path: 'E:/Media/TV Shows/Sample Crime Series/Season 01/Sample Crime Series - S01E02 - Cats in the Bag.mkv',
+    expectedTitle: 'Sample Crime Series',
     expectedIsSeries: true,
     expectedSeason: 1,
     expectedEpisode: 2,

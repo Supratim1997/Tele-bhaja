@@ -138,6 +138,43 @@ export interface SeriesDetailResponse extends Series {
   seasons: (Season & { episodes: Episode[] })[];
 }
 
+export interface StorageDrive {
+  id: string;
+  label: string;
+  shortLabel: string;
+  path: string;
+  isPrimary: boolean;
+  movieCount: number;
+  seriesCount: number;
+}
+
+export interface DriveBrowseItem {
+  id?: number;
+  title: string;
+  filePath: string;
+  fileSize: number;
+  duration?: number;
+  year?: number;
+  posterPath?: string;
+  mimeType?: string;
+  needsTranscode?: boolean;
+  isSeries?: boolean;
+}
+
+export interface DriveFolderItem {
+  name: string;
+  path: string;
+  itemCount: number;
+}
+
+export interface DriveBrowseResponse {
+  driveId: string;
+  currentPath: string;
+  breadcrumbs: Array<{ name: string; path: string }>;
+  folders: DriveFolderItem[];
+  files: DriveBrowseItem[];
+}
+
 export interface ScanStatus {
   running: boolean;
   progress: number;       // 0-100
@@ -181,6 +218,8 @@ export interface FileTreeNode {
   totalMediaCount: number;
   excludedMediaCount: number;
   children?: FileTreeNode[];
+  categoryType?: 'series' | 'franchise' | 'movie';
+  categoryName?: string;
 }
 
 export interface ControlStats {
@@ -199,4 +238,13 @@ export interface MediaOverrideInput {
   languages?: string[];
   franchiseName?: string;
   isSeries?: boolean;
+}
+
+export interface FolderCategorizeInput {
+  path: string;
+  categoryType: 'series' | 'franchise' | 'movie' | 'none';
+  categoryName?: string;
+  isAnimated?: boolean;
+  languages?: string[];
+  applyToChildren?: boolean;
 }

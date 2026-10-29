@@ -12,15 +12,26 @@ scanRouter.post('/start', async (req, res) => {
     return;
   }
 
-  const { path: reqPath, force } = (req.body as { path?: string; force?: boolean }) || {};
-  const mediaPath = reqPath ?? config.mediaStoragePath;
+  const { path: reqPath, force } = (req.body as { path?: string | string[]; force?: boolean }) || {};
+  const mediaPaths = reqPath ?? config.mediaStoragePaths;
 
   // Start scan in background — don't await
-  scanner.scan(mediaPath, { force: Boolean(force) }).catch((err: Error) => {
+  scanner.scan(mediaPaths, { force: Boolean(force) }).catch((err: Error) => {
     console.error('[Scan] Fatal error:', err.message);
   });
 
-  res.json({ ok: true, message: 'Scan started', mediaPath, force: Boolean(force) });
+  res.json({ ok: true, message: 'Scan started', mediaPaths, force: Boolean(force) });
+});
+
+// ── POST /api/scan/prune ───────────────────────────────────────────────────
+scanRouter.post('/prune', async (_req, res) => {
+  try {
+    const result = await scanner.pruneMissingMedia();
+    res.json({ ok: true, message: 'Prune completed', ...result });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
 });
 
 // ── GET /api/scan/status ──────────────────────────────────────────────────

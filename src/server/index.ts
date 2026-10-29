@@ -20,6 +20,17 @@ async function main() {
   await initDb();
   console.log(`[DB] SQLite initialized at ${config.dbPath}`);
 
+  // Prune any orphaned media items whose files no longer exist on disk
+  try {
+    const pruned = await scanner.pruneMissingMedia();
+    if (pruned.movies > 0 || pruned.episodes > 0) {
+      console.log(`[Scanner] Pruned ${pruned.movies} missing movies and ${pruned.episodes} missing episodes.`);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[Scanner] Startup prune warning: ${msg}`);
+  }
+
   // ── Express app ────────────────────────────────────────────────────────
   const app = express();
 
@@ -91,15 +102,15 @@ async function main() {
 ╠══════════════════════════════════════════════════════╣
 ║  Server  : http://${config.host}:${config.port}               ║
 ║  LAN URL : http://<YOUR_IP>:${config.port}                    ║
-║  Media   : ${config.mediaStoragePath.padEnd(39)}║
+║  Media   : ${config.mediaStoragePaths.join('; ').slice(0, 39).padEnd(39)}║
 ╚══════════════════════════════════════════════════════╝
     `.trim());
 
     // Auto-scan on startup
     if (config.scanner.onStartup) {
-      console.log('[Scanner] Auto-scan starting...');
-      scanner.scan(config.mediaStoragePath).catch((err: Error) => {
-        console.error('[Scanner] Auto-scan failed:', err.message);
+      console.log('[Scanner] Auto-scan starting across configured drives...');
+      scanner.scan(config.mediaStoragePaths).catch((err: Error) => {
+        console.error(`[Scanner] Startup scan failed: ${err.message}`);
       });
     }
   });

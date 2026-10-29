@@ -8,12 +8,14 @@ A production-grade, self-hosted OTT streaming platform that reads directly from 
 
 - **🎬 Netflix-Style Streaming Experience**:
   - Full-screen HTML5 video player with keyboard controls, touch gesture skipping (double-tap ±10s), and screen orientation locking on mobile.
+  - Generous thumbnail grid spacing across all mobile, tablet, and desktop display sizes.
   - HTTP 206 Partial Content byte-range streaming for instant seeking.
   - Automatic on-the-fly subtitle conversion (SRT → WebVTT) with sub-second latency.
   - Resume playback prompt with periodic heartbeat progress saving.
 - **🗂️ Content Control & Categorization Portal**:
   - Web-based content management portal accessible via the top navigation bar (`🗂️ Content Portal`).
   - Interactive folder and file tree explorer with expand/collapse and tri-state checkboxes.
+  - **Folder Level Categorization**: Tag entire folders as **Series** (with seasons/episodes) or **Franchises** (with chronological movie collections), or apply Animated and Language tags to whole folders.
   - Granular inclusion/exclusion controls: choose exactly which files or folders are exposed to the OTT library.
   - Persistent settings in SQLite (`path_controls` table) that survive restarts, reboots, and rescans.
   - Metadata & categorization drawer to manually override Title, Year, Animated tag, Languages, and Franchises.
@@ -83,6 +85,21 @@ The UI opens at `http://localhost:3000`. Devices on the same Wi-Fi can access vi
 
 TeleBhaja features a dedicated **Content Control Portal** directly accessible from the header navigation bar (`🗂️ Content Portal`), giving you complete manual authority over your media collection:
 
+- **Multi-Drive Architecture & Separate Drive Panels**:
+  - Configure multiple drives simultaneously using semicolon-delimited paths: e.g. `MEDIA_STORAGE_PATH=E:\Media;F:\Movies;D:\Videos`.
+  - Automatically organizes content into dedicated, switchable Drive Panels on the Home page (`[💾 Primary (E:)]`, `[💾 Drive F:]`, etc.).
+  - **Dual View Modes on Secondary Drives**: Secondary drive panels offer an instant toggle between:
+    - **🎬 OTT View**: full posters, shelves, category pills, and responsive grids.
+    - **📁 Folder Structure View**: browsable directory tree browser with interactive breadcrumbs, subfolders, file sizes, format tags, and 1-click playback.
+- **Variable Playback Speed Streaming**:
+  - Full-featured video player includes instant playback rate controls (`0.5x`, `0.75x`, `1.0x (Normal)`, `1.25x`, `1.5x`, `1.75x`, `2.0x`).
+- **Folder Level Categorization (Series & Franchise)**:
+  - Click **"🏷️ Categorize"** on any folder in the tree to assign the entire folder:
+    - **🎭 Franchise Collection**: groups all movies in this folder under a named Franchise (e.g. "Harry Potter", "Marvel Cinematic Universe") and auto-creates franchise cards in the OTT view.
+    - **📺 TV Series**: converts all video files in the folder into episodes of a TV Series (e.g. "Crime Drama", "Mystery Anthology") with full season and episode drawers.
+    - **🎬 Movie Collection**: marks all videos inside as standalone films.
+    - **✨ Animated & Language Inheritance**: marks all content in the folder as animated or assigns audio languages.
+    - **One-click cascading**: automatically applies to all existing and future media files inside the folder across rescans.
 - **Interactive File Structure Tree**:
   - Full hierarchical folder and file explorer mirroring your storage drive.
   - Expand/collapse directories with tri-state checkboxes (checked = all included, unchecked = all excluded, dash = partially excluded).
@@ -91,12 +108,10 @@ TeleBhaja features a dedicated **Content Control Portal** directly accessible fr
   - All inclusion/exclusion choices and categorization overrides are stored in SQLite (`path_controls` table).
   - Exclusions survive application restarts and background rescans (`COALESCE(media_items.is_excluded, excluded.is_excluded)`).
   - Excluded folders are pruned during filesystem scans for high-speed scanning performance.
+- **Automatic Pruning of Missing Files**:
+  - When media files are deleted or moved from your storage drive, running a scan automatically purges missing records, empty seasons, series, and franchises from the library.
 - **Manual Metadata & Categorization Overrides**:
-  - Click **"Edit"** on any media item to open a drawer and customize:
-    - **Title & Release Year**
-    - **Animated Tag**
-    - **Audio Languages** (e.g. `en, bn, hi`)
-    - **Franchise / Collection Assignment** (automatically links to existing or creates new franchises)
+  - Click **"Edit"** on any media item to customize Title, Release Year, Animated Tag, Languages, and Franchise Assignment.
 - **Search, Filter & Quick Actions**:
   - Live text search across raw file paths and parsed media titles.
   - Filter view by status (`All items`, `Included only`, `Excluded only`).
@@ -113,31 +128,31 @@ E:\Media\
 │
 ├── English\
 │   ├── Movies\
-│   │   ├── The Dark Knight (2008)\
-│   │   │   └── The.Dark.Knight.2008.1080p.BluRay.mkv
-│   │   └── Avengers.Endgame.2019.1080p.WEB-DL.mp4
+│   │   ├── Action Movie (2020)\
+│   │   │   └── Action.Movie.2020.1080p.BluRay.mkv
+│   │   └── SciFi.Feature.2019.1080p.WEB-DL.mp4
 │   │
 │   └── Series\
-│       ├── Breaking Bad\
+│       ├── Mystery Show\
 │       │   ├── Season 1\
-│       │   │   ├── Breaking.Bad.S01E01.Pilot.mkv
-│       │   │   └── Breaking.Bad.S01E02.mkv
+│       │   │   ├── Mystery.Show.S01E01.Pilot.mkv
+│       │   │   └── Mystery.Show.S01E02.mkv
 │       │   └── Season 2\
-│       │       └── Breaking.Bad.S02E01.mkv
-│       └── The.Office.S03E01.1080p.mp4
+│       │       └── Mystery.Show.S02E01.mkv
+│       └── Drama.Series.S01E01.1080p.mp4
 │
 ├── Hindi\
-│   ├── 3 Idiots (2009).mkv
-│   └── KGF Chapter 2 (2022) [Hindi].mp4
+│   ├── Comedy Drama (2009).mkv
+│   └── Action Blockbuster (2022) [Hindi].mp4
 │
 ├── Bengali\
-│   └── Pather Panchali (1955).mkv
+│   └── Classic Feature (1955).mkv
 │
 ├── Animation\
-│   ├── Studio Ghibli\
-│   │   ├── Spirited Away (2001).mkv
-│   │   └── My Neighbor Totoro (1988).mkv
-│   └── Pixar\
+│   ├── Studio Collection\
+│   │   ├── Animated Journey (2001).mkv
+│   │   └── Forest Spirit (1988).mkv
+│   └── Studio Two\
 │       └── WALL-E (2008).mp4
 │
 └── Franchises\
@@ -186,13 +201,13 @@ telebhaja/
 │   │       ├── stream.ts         ← /api/stream endpoints
 │   │       ├── progress.ts       ← /api/progress endpoints
 │   │       ├── scan.ts           ← /api/scan + /api/franchises
-│   │       └── control.ts        ← /api/control (Tree, toggle, metadata overrides)
+│   │       └── control.ts        ← /api/control (Tree, toggle, folder categorizations)
 │   │
 │   ├── client/
 │   │   ├── App.tsx               ← Root component + stream/portal tabs
 │   │   ├── main.tsx              ← React entry point
 │   │   ├── index.html            ← HTML shell
-│   │   ├── styles/globals.css    ← Global CSS + Tailwind
+│   │   ├── styles/globals.css    ← Global CSS + Tailwind + thumbnail spacing
 │   │   ├── lib/api.ts            ← API client (library, stream, control)
 │   │   ├── hooks/useMedia.ts     ← React hooks
 │   │   ├── components/
@@ -200,7 +215,7 @@ telebhaja/
 │   │   │   ├── MoviePlayerModal.tsx
 │   │   │   ├── SeriesDrawer.tsx  ← Series/season/episode picker
 │   │   │   ├── FranchiseDrawer.tsx
-│   │   │   └── MediaCard.tsx     ← Movie/Series/Franchise cards
+│   │   │   └── MediaCard.tsx     ← Responsive cards with clean gap spacing
 │   │   └── pages/
 │   │       ├── Home.tsx          ← Main OTT streaming library view
 │   │       ├── Portal.tsx        ← Content Control & Categorization Portal
@@ -211,7 +226,7 @@ telebhaja/
 │
 ├── test/
 │   ├── parser.test.ts            ← Heuristic parser tests (20 tests)
-│   └── integration.test.ts       ← End-to-end integration tests (65 tests)
+│   └── integration.test.ts       ← End-to-end integration tests (74 tests)
 │
 ├── docker-compose.yml
 ├── run.bat / run.sh
@@ -238,6 +253,8 @@ telebhaja/
 |---|---|
 | `GET /api/control/tree` | Full directory tree with media stats and exclusion states |
 | `POST /api/control/toggle` | Toggle inclusion/exclusion for a file or entire directory |
+| `PUT /api/control/folder` | Categorize folder as Series, Franchise, or Movie collection |
+| `GET /api/control/franchises` | List of all franchises for autocomplete |
 | `PUT /api/control/media/:type/:id` | Manually override Title, Year, Animated flag, Languages, Franchise |
 | `POST /api/control/reset` | Reset all exclusions back to included |
 
@@ -270,7 +287,7 @@ telebhaja/
 
 ## 🧪 Testing & Verification
 
-TeleBhaja includes 85 automated unit and end-to-end integration tests:
+TeleBhaja includes 94 automated unit and end-to-end integration tests:
 
 ```bash
 # Run full test suite (parser heuristics + full integration pipeline)
@@ -284,7 +301,7 @@ npm run build
 ```
 
 ```text
-Results: 20 parser tests passed, 65 integration tests passed (85 total passing, 0 failed).
+Results: 20 parser tests passed, 74 integration tests passed (94 total passing, 0 failed).
 ```
 
 ---
@@ -324,7 +341,7 @@ For GPU acceleration (Linux), uncomment the `/dev/dri` device in `docker-compose
 
 | Variable | Default | Description |
 |---|---|---|
-| `MEDIA_STORAGE_PATH` | `E:\Media` | Root of your media drive |
+| `MEDIA_STORAGE_PATH` | `E:\Media` | Media drive path(s) (supports multiple drives with `;` e.g. `E:\Media;F:\Movies`) |
 | `PORT` | `3000` | Server port |
 | `HOST` | `0.0.0.0` | Bind address (0.0.0.0 = all interfaces) |
 | `TMDB_API_KEY` | *(empty)* | Optional — enables poster art & metadata |

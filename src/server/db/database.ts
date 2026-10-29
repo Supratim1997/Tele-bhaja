@@ -23,6 +23,7 @@ export interface DbHelper {
 }
 
 let _db: DbHelper | null = null;
+let _currentDbPath: string | null = null;
 
 function normalizeArgs(args: unknown[]): InArgs {
   if (args.length === 1 && Array.isArray(args[0])) {
@@ -31,10 +32,15 @@ function normalizeArgs(args: unknown[]): InArgs {
   return args as InArgs;
 }
 
-export function getDb(): DbHelper {
-  if (_db) return _db;
+export function resetDbConnection(): void {
+  _db = null;
+  _currentDbPath = null;
+}
 
+export function getDb(): DbHelper {
   const dbPath = path.resolve(config.dbPath);
+  if (_db && _currentDbPath === dbPath) return _db;
+
   const dbDir = path.dirname(dbPath);
 
   if (!fs.existsSync(dbDir)) {
@@ -46,6 +52,7 @@ export function getDb(): DbHelper {
     url: `file:${dbPath.replace(/\\/g, '/')}`,
   });
 
+  _currentDbPath = dbPath;
   _db = {
     client,
     execute: (stmt: InStatement) => client.execute(stmt),
@@ -233,11 +240,15 @@ async function applySchema(db: Client): Promise<void> {
       status        TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed'))
     )`,
 
-    // Path Controls (exclusion rules for files and directories)
+    // Path Controls (exclusion rules & folder categorizations)
     `CREATE TABLE IF NOT EXISTS path_controls (
       path          TEXT PRIMARY KEY,
       is_excluded   INTEGER NOT NULL DEFAULT 1,
       is_directory  INTEGER NOT NULL DEFAULT 0,
+      category_type TEXT,
+      category_name TEXT,
+      is_animated   INTEGER,
+      languages     TEXT,
       created_at    TEXT DEFAULT (datetime('now')),
       updated_at    TEXT DEFAULT (datetime('now'))
     )`,
@@ -255,11 +266,15 @@ async function applySchema(db: Client): Promise<void> {
     }
   }
 
-  // Schema migrations for is_excluded
+  // Schema migrations for is_excluded & folder categorizations
   const migrations = [
     `ALTER TABLE media_items ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE episodes ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE series ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE path_controls ADD COLUMN category_type TEXT`,
+    `ALTER TABLE path_controls ADD COLUMN category_name TEXT`,
+    `ALTER TABLE path_controls ADD COLUMN is_animated INTEGER`,
+    `ALTER TABLE path_controls ADD COLUMN languages TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_media_excluded ON media_items(is_excluded)`,
     `CREATE INDEX IF NOT EXISTS idx_episodes_excluded ON episodes(is_excluded)`,
     `CREATE INDEX IF NOT EXISTS idx_series_excluded ON series(is_excluded)`,

@@ -46,7 +46,8 @@ const Player: React.FC<PlayerProps> = ({
   const [muted, setMuted] = useState(false);
   const [controlsState, setControlsState] = useState<ControlsState>('visible');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showSubMenu, setShowSubMenu] = useState<'audio' | 'subtitle' | null>(null);
+  const [showSubMenu, setShowSubMenu] = useState<'audio' | 'subtitle' | 'speed' | null>(null);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
@@ -96,6 +97,12 @@ const Player: React.FC<PlayerProps> = ({
       videoRef.current.volume = volume;
     }
   }, [volume]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed, src]);
 
   // ── Controls visibility ─────────────────────────────────────────────────
   const showControls = useCallback(() => {
@@ -575,6 +582,43 @@ const Player: React.FC<PlayerProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Playback speed */}
+              <div className="relative">
+                <button
+                  id="speed-btn"
+                  className="player-btn px-2.5 h-8 text-xs font-bold text-white bg-white/10 hover:bg-white/25 rounded-lg border border-white/15 transition-all flex items-center gap-1"
+                  onClick={() => setShowSubMenu((s) => s === 'speed' ? null : 'speed')}
+                  title="Playback Speed"
+                >
+                  <span>{playbackSpeed}x</span>
+                </button>
+                {showSubMenu === 'speed' && (
+                  <div className="absolute right-0 bottom-10 glass-card p-1.5 min-w-28 z-50 bg-black/95 backdrop-blur-md rounded-xl border border-white/20 shadow-2xl animate-fade-in">
+                    <div className="text-[10px] uppercase font-bold text-surface-400 px-2 py-1 tracking-wider">Speed</div>
+                    {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((spd) => (
+                      <button
+                        key={spd}
+                        className={`w-full text-left px-2.5 py-1.5 text-xs rounded-lg transition-colors flex items-center justify-between ${
+                          playbackSpeed === spd
+                            ? 'bg-brand-600 text-white font-bold'
+                            : 'text-surface-200 hover:bg-white/15'
+                        }`}
+                        onClick={() => {
+                          setPlaybackSpeed(spd);
+                          if (videoRef.current) {
+                            videoRef.current.playbackRate = spd;
+                          }
+                          setShowSubMenu(null);
+                        }}
+                      >
+                        <span>{spd}x</span>
+                        {spd === 1 && <span className="text-[10px] opacity-60">Normal</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Mute */}
               <button
                 id="mute-btn"

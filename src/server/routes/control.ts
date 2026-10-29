@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/database.js';
 import { config } from '../config.js';
-import type { FileTreeNode, ControlStats, MediaOverrideInput } from '../../shared/types.js';
+import type { FileTreeNode, ControlStats, MediaOverrideInput, FolderCategorizeInput } from '../../shared/types.js';
 
 export const controlRouter = Router();
 
@@ -33,10 +33,16 @@ controlRouter.get('/tree', async (req, res) => {
     }
 
     // 1. Fetch all path controls from DB
-    const controlsRows = await db.prepare('SELECT path, is_excluded, is_directory FROM path_controls').all();
+    const controlsRows = await db.prepare('SELECT path, is_excluded, is_directory, category_type, category_name, is_animated, languages FROM path_controls').all();
     const excludedPaths = new Set<string>();
     const includedPaths = new Set<string>();
     const excludedDirPrefixes: string[] = [];
+    const folderCategoriesByPath = new Map<string, {
+      categoryType?: 'series' | 'franchise' | 'movie';
+      categoryName?: string;
+      isAnimated?: boolean;
+      languages?: string[];
+    }>();
 
     for (const row of controlsRows) {
       const p = String(row.path).replace(/\\/g, '/');
@@ -47,6 +53,18 @@ controlRouter.get('/tree', async (req, res) => {
         if (isDir) excludedDirPrefixes.push(p);
       } else {
         includedPaths.add(p);
+      }
+      if (isDir && row.category_type) {
+        let langs: string[] | undefined;
+        try {
+          if (row.languages) langs = JSON.parse(String(row.languages));
+        } catch { }
+        folderCategoriesByPath.set(p, {
+          categoryType: row.category_type as any,
+          categoryName: row.category_name ? String(row.category_name) : undefined,
+          isAnimated: row.is_animated !== null && row.is_animated !== undefined ? Boolean(row.is_animated) : undefined,
+          languages: langs,
+        });
       }
     }
 
@@ -172,7 +190,7 @@ controlRouter.get('/tree', async (req, res) => {
           let statSize = 0;
           try {
             statSize = fs.statSync(fullPath).size;
-          } catch {}
+          } catch { }
 
           if (isMedia) {
             totalMediaFiles++;
@@ -192,7 +210,7 @@ controlRouter.get('/tree', async (req, res) => {
             try {
               if (movie?.languages) languages = JSON.parse(movie.languages);
               else if (ep?.languages) languages = JSON.parse(ep.languages);
-            } catch {}
+            } catch { }
 
             children.push({
               id: normFullPath,
@@ -232,6 +250,7 @@ controlRouter.get('/tree', async (req, res) => {
       }
 
       const isDirFullyExcluded = dirTotalMedia > 0 && dirExcludedMedia === dirTotalMedia;
+      const folderCat = folderCategoriesByPath.get(normCurrent);
 
       return {
         id: normCurrent,
@@ -242,6 +261,10 @@ controlRouter.get('/tree', async (req, res) => {
         isExcluded: isDirFullyExcluded,
         totalMediaCount: dirTotalMedia,
         excludedMediaCount: dirExcludedMedia,
+        categoryType: folderCat?.categoryType,
+        categoryName: folderCat?.categoryName,
+        isAnimated: folderCat?.isAnimated,
+        languages: folderCat?.languages,
         children,
       };
     };
@@ -444,6 +467,244 @@ controlRouter.put('/media/:type/:id', async (req, res) => {
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ── GET /api/control/franchises ──────────────────────────────────────────────
+// List of all franchise names for autocomplete
+controlRouter.get('/franchises', async (_req, res) => {
+  try {
+    const db = getDb();
+    const rows = await db.prepare('SELECT id, name FROM franchises ORDER BY name ASC').all();
+    res.json(rows);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ── PUT /api/control/folder ──────────────────────────────────────────────────
+// Categorize an entire directory (as Series, Franchise, or Movie collection)
+controlRouter.put('/folder', async (req, res) => {
+  try {
+    const db = getDb();
+    const {
+      path: folderPath,
+      categoryType,
+      categoryName,
+      isAnimated,
+      languages,
+      applyToChildren = true,
+    } = req.body as FolderCategorizeInput;
+
+    if (!folderPath) {
+      res.status(400).json({ error: 'Folder path is required' });
+      return;
+    }
+
+    const normPath = folderPath.replace(/\\/g, '/');
+    const now = new Date().toISOString();
+    const prefixSlash = `${normPath}/%`;
+    const prefixBackslash = `${normPath.replace(/\//g, '\\')}\\%`;
+
+    if (categoryType === 'none') {
+      // Clear folder categorization rule
+      await db.execute({
+        sql: `INSERT INTO path_controls (path, is_excluded, is_directory, category_type, category_name, is_animated, languages, created_at, updated_at)
+              VALUES (?, 0, 1, NULL, NULL, NULL, NULL, ?, ?)
+              ON CONFLICT(path) DO UPDATE SET
+                category_type = NULL, category_name = NULL, is_animated = NULL, languages = NULL, updated_at = excluded.updated_at`,
+        args: [normPath, now, now],
+      });
+      res.json({ ok: true, message: 'Folder categorization cleared' });
+      return;
+    }
+
+    const name = categoryName?.trim() || path.basename(folderPath);
+
+    // 1. Persist rule in path_controls
+    await db.execute({
+      sql: `INSERT INTO path_controls (path, is_excluded, is_directory, category_type, category_name, is_animated, languages, created_at, updated_at)
+            VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+              category_type = excluded.category_type,
+              category_name = excluded.category_name,
+              is_animated = excluded.is_animated,
+              languages = excluded.languages,
+              updated_at = excluded.updated_at`,
+      args: [
+        normPath,
+        categoryType,
+        name,
+        isAnimated !== undefined ? (isAnimated ? 1 : 0) : null,
+        languages ? JSON.stringify(languages) : null,
+        now, now,
+      ],
+    });
+
+    if (applyToChildren) {
+      if (categoryType === 'franchise') {
+        // Find or create franchise
+        let fRow = await db.prepare('SELECT id FROM franchises WHERE name=?').get(name);
+        let franchiseId: number;
+        if (!fRow) {
+          const ins = await db.run('INSERT INTO franchises (name, created_at, updated_at) VALUES (?,?,?)', name, now, now);
+          franchiseId = ins.lastInsertRowid;
+        } else {
+          franchiseId = Number(fRow.id);
+        }
+
+        // Apply franchise, animation, and languages to all child movies
+        await db.execute({
+          sql: `UPDATE media_items SET
+                  franchise_id = ?,
+                  is_animated = COALESCE(?, is_animated),
+                  languages = COALESCE(?, languages),
+                  updated_at = ?
+                WHERE file_path LIKE ? OR file_path LIKE ? OR file_path = ?`,
+          args: [
+            franchiseId,
+            isAnimated !== undefined ? (isAnimated ? 1 : 0) : null,
+            languages ? JSON.stringify(languages) : null,
+            now,
+            prefixSlash, prefixBackslash, folderPath,
+          ],
+        });
+      } else if (categoryType === 'series') {
+        // Find or create series
+        let sRow = await db.prepare('SELECT id FROM series WHERE title=?').get(name);
+        let seriesId: number;
+        if (!sRow) {
+          const ins = await db.run(
+            'INSERT INTO series (title, is_animated, languages, created_at, updated_at) VALUES (?,?,?,?,?)',
+            name,
+            isAnimated ? 1 : 0,
+            languages ? JSON.stringify(languages) : '[]',
+            now, now
+          );
+          seriesId = ins.lastInsertRowid;
+        } else {
+          seriesId = Number(sRow.id);
+          await db.execute({
+            sql: `UPDATE series SET
+                    is_animated = COALESCE(?, is_animated),
+                    languages = COALESCE(?, languages),
+                    updated_at = ?
+                  WHERE id = ?`,
+            args: [
+              isAnimated !== undefined ? (isAnimated ? 1 : 0) : null,
+              languages ? JSON.stringify(languages) : null,
+              now,
+              seriesId,
+            ],
+          });
+        }
+
+        // Ensure default season exists
+        let seasonRow = await db.prepare('SELECT id FROM seasons WHERE series_id = ? AND season_number = 1').get(seriesId);
+        let defaultSeasonId: number;
+        if (!seasonRow) {
+          const insSeason = await db.run('INSERT INTO seasons (series_id, season_number) VALUES (?, 1)', seriesId);
+          defaultSeasonId = insSeason.lastInsertRowid;
+        } else {
+          defaultSeasonId = Number(seasonRow.id);
+        }
+
+        // Migrate any standalone media_items inside this folder into episodes
+        const moviesInFolder = await db.prepare(`
+          SELECT * FROM media_items
+          WHERE file_path LIKE ? OR file_path LIKE ? OR file_path = ?
+        `).all(prefixSlash, prefixBackslash, folderPath);
+
+        let epCounter = 1;
+        for (const m of moviesInFolder) {
+          await db.execute({
+            sql: `INSERT INTO episodes (
+              series_id, season_id, season_number, episode_number, title,
+              duration, file_path, file_size, mime_type,
+              audio_tracks, subtitle_tracks, needs_transcode, is_excluded, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(file_path) DO UPDATE SET
+              series_id = excluded.series_id,
+              season_id = excluded.season_id,
+              updated_at = excluded.updated_at`,
+            args: [
+              seriesId,
+              defaultSeasonId,
+              1,
+              epCounter++,
+              m.title ? String(m.title) : `Episode ${epCounter}`,
+              m.duration ? Number(m.duration) : null,
+              String(m.file_path),
+              Number(m.file_size ?? 0),
+              String(m.mime_type ?? 'video/mp4'),
+              m.audio_tracks ? String(m.audio_tracks) : '[]',
+              m.subtitle_tracks ? String(m.subtitle_tracks) : '[]',
+              m.needs_transcode ? Number(m.needs_transcode) : 0,
+              m.is_excluded ? Number(m.is_excluded) : 0,
+              now, now,
+            ],
+          });
+          await db.execute({ sql: 'DELETE FROM media_items WHERE id = ?', args: [Number(m.id)] });
+        }
+
+        // Also update any existing episodes in this folder to this series
+        await db.execute({
+          sql: `UPDATE episodes SET series_id = ?, updated_at = ?
+                WHERE file_path LIKE ? OR file_path LIKE ? OR file_path = ?`,
+          args: [seriesId, now, prefixSlash, prefixBackslash, folderPath],
+        });
+
+        // Update series timestamp
+        await db.execute({
+          sql: `UPDATE series SET updated_at = ? WHERE id = ?`,
+          args: [now, seriesId],
+        });
+      } else if (categoryType === 'movie') {
+        // Convert any episodes back into standalone media_items
+        const epsInFolder = await db.prepare(`
+          SELECT * FROM episodes
+          WHERE file_path LIKE ? OR file_path LIKE ? OR file_path = ?
+        `).all(prefixSlash, prefixBackslash, folderPath);
+
+        for (const ep of epsInFolder) {
+          await db.execute({
+            sql: `INSERT INTO media_items (
+              title, duration, file_path, file_size, mime_type,
+              audio_tracks, subtitle_tracks, needs_transcode,
+              is_animated, languages, is_excluded, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(file_path) DO UPDATE SET
+              is_animated = COALESCE(?, is_animated),
+              languages = COALESCE(?, languages),
+              updated_at = excluded.updated_at`,
+            args: [
+              ep.title ? String(ep.title) : path.basename(String(ep.file_path)),
+              ep.duration ? Number(ep.duration) : null,
+              String(ep.file_path),
+              Number(ep.file_size ?? 0),
+              String(ep.mime_type ?? 'video/mp4'),
+              ep.audio_tracks ? String(ep.audio_tracks) : '[]',
+              ep.subtitle_tracks ? String(ep.subtitle_tracks) : '[]',
+              ep.needs_transcode ? Number(ep.needs_transcode) : 0,
+              isAnimated ? 1 : 0,
+              languages ? JSON.stringify(languages) : '[]',
+              ep.is_excluded ? Number(ep.is_excluded) : 0,
+              now, now,
+              isAnimated !== undefined ? (isAnimated ? 1 : 0) : null,
+              languages ? JSON.stringify(languages) : null,
+            ],
+          });
+          await db.execute({ sql: 'DELETE FROM episodes WHERE id = ?', args: [Number(ep.id)] });
+        }
+      }
+    }
+
+    res.json({ ok: true, message: `Folder categorized as ${categoryType}: "${name}"` });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[Control] Folder categorize error:', msg);
     res.status(500).json({ error: msg });
   }
 });

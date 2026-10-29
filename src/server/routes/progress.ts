@@ -111,10 +111,14 @@ progressRouter.post('/:type/:id', async (req, res) => {
       return;
     }
 
-    const { positionSeconds, durationSeconds } = req.body as {
+    const body = req.body as {
       positionSeconds?: number;
       durationSeconds?: number;
+      position?: number;
+      duration?: number;
     };
+    const positionSeconds = body.positionSeconds ?? body.position;
+    const durationSeconds = body.durationSeconds ?? body.duration;
 
     if (typeof positionSeconds !== 'number' || isNaN(positionSeconds)) {
       res.status(400).json({ error: 'positionSeconds must be a number' });

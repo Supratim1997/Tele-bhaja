@@ -42,14 +42,17 @@ if not defined SCAN_ON_STARTUP set SCAN_ON_STARTUP=true
 :: Verify media path exists, or interactively prompt
 :check_media_path
 if not defined MEDIA_STORAGE_PATH set MEDIA_STORAGE_PATH=E:\Media
-if not exist "!MEDIA_STORAGE_PATH!" (
-  echo.
-  echo  [Notice] Media path "!MEDIA_STORAGE_PATH!" was not found.
-  set /p USER_PATH="  Enter your media folder path (e.g. E:\Movies or E:\): "
-  if not "!USER_PATH!"=="" (
-    set USER_PATH=!USER_PATH:"=!
-    set MEDIA_STORAGE_PATH=!USER_PATH!
-    goto :check_media_path
+echo !MEDIA_STORAGE_PATH! | findstr /c:";" >nul
+if errorlevel 1 (
+  if not exist "!MEDIA_STORAGE_PATH!" (
+    echo.
+    echo  [Notice] Media path "!MEDIA_STORAGE_PATH!" was not found.
+    set /p USER_PATH="  Enter media folder path(s) (use ; for multiple drives, e.g. E:\Media;F:\Movies): "
+    if not "!USER_PATH!"=="" (
+      set USER_PATH=!USER_PATH:"=!
+      set MEDIA_STORAGE_PATH=!USER_PATH!
+      goto :check_media_path
+    )
   )
 )
 

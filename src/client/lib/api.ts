@@ -19,7 +19,8 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 import type {
   LibraryResponse, MediaItem, Series, SeriesDetailResponse,
   Franchise, CategorySummary, WatchProgress, ScanStatus,
-  FileTreeNode, ControlStats, MediaOverrideInput,
+  FileTreeNode, ControlStats, MediaOverrideInput, FolderCategorizeInput,
+  StorageDrive, DriveBrowseResponse,
 } from '../../shared/types.js';
 
 // ── Library ──────────────────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ export interface LibraryQuery {
   search?: string;
   page?: number;
   limit?: number;
+  drive?: string;
 }
 
 export const api = {
@@ -41,11 +43,31 @@ export const api = {
       if (query?.search) params.set('search', query.search);
       if (query?.page) params.set('page', String(query.page));
       if (query?.limit) params.set('limit', String(query.limit));
+      if (query?.drive) params.set('drive', query.drive);
       const qs = params.toString();
       return apiFetch<LibraryResponse>(`/library${qs ? `?${qs}` : ''}`);
     },
     getMovie: (id: number) => apiFetch<MediaItem>(`/library/movies/${id}`),
     getSeries: (id: number) => apiFetch<SeriesDetailResponse>(`/library/series/${id}`),
+    getDrives: () => apiFetch<StorageDrive[]>('/library/drives'),
+    browse: (drive?: string, subpath?: string) => {
+      const params = new URLSearchParams();
+      if (drive) params.set('drive', drive);
+      if (subpath) params.set('subpath', subpath);
+      const qs = params.toString();
+      return apiFetch<DriveBrowseResponse>(`/library/browse${qs ? `?${qs}` : ''}`);
+    },
+  },
+
+  drives: {
+    list: () => apiFetch<StorageDrive[]>('/library/drives'),
+    browse: (drive?: string, subpath?: string) => {
+      const params = new URLSearchParams();
+      if (drive) params.set('drive', drive);
+      if (subpath) params.set('subpath', subpath);
+      const qs = params.toString();
+      return apiFetch<DriveBrowseResponse>(`/library/browse${qs ? `?${qs}` : ''}`);
+    },
   },
 
   franchises: {
@@ -103,6 +125,12 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
+    categorizeFolder: (data: FolderCategorizeInput) =>
+      apiFetch<{ ok: boolean; message: string }>('/control/folder', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    getFranchises: () => apiFetch<{ id: number; name: string }[]>('/control/franchises'),
     reset: () => apiFetch<{ ok: boolean; message: string }>('/control/reset', { method: 'POST' }),
   },
 

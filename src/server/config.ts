@@ -15,8 +15,17 @@ export const config = {
   port:              parseInt(process.env.PORT ?? '3000', 10),
   host:              process.env.HOST ?? '0.0.0.0',
   nodeEnv:           process.env.NODE_ENV ?? 'development',
-  mediaStoragePath:  process.env.MEDIA_STORAGE_PATH ?? 'E:\\Media',
-  dbPath:            process.env.DB_PATH ?? './data/telebhaja.db',
+  get mediaStoragePaths(): string[] {
+    const raw = process.env.MEDIA_STORAGE_PATH ?? 'E:\\Media';
+    const list = raw.split(/[;,|\r\n]+/).map((s) => s.trim()).filter(Boolean);
+    return list.length > 0 ? list : ['E:\\Media'];
+  },
+  get mediaStoragePath(): string {
+    return this.mediaStoragePaths[0] ?? 'E:\\Media';
+  },
+  get dbPath(): string {
+    return process.env.DB_PATH ?? './data/telebhaja.db';
+  },
 
   tmdb: {
     apiKey:    process.env.TMDB_API_KEY ?? '',
