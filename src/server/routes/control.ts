@@ -25,7 +25,7 @@ const IGNORE_DIRS = new Set([
 controlRouter.get('/tree', async (req, res) => {
   try {
     const db = getDb();
-    const rootPath = (req.query.path as string) || process.env.MEDIA_STORAGE_PATH || config.mediaStoragePath;
+    const rootPath = (req.query.path as string) || config.mediaStoragePath;
 
     if (!fs.existsSync(rootPath)) {
       res.status(404).json({ error: `Media storage path does not exist: ${rootPath}` });

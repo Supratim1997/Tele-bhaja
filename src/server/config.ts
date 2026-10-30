@@ -17,7 +17,10 @@ export const config = {
   nodeEnv:           process.env.NODE_ENV ?? 'development',
   get mediaStoragePaths(): string[] {
     const raw = process.env.MEDIA_STORAGE_PATH ?? 'E:\\Media';
-    const list = raw.split(/[;,|\r\n]+/).map((s) => s.trim()).filter(Boolean);
+    const list = raw
+      .split(/[;,|\r\n]+/)
+      .map((s) => s.replace(/^[ "']+|[ "']+$/g, '').trim())
+      .filter(Boolean);
     return list.length > 0 ? list : ['E:\\Media'];
   },
   get mediaStoragePath(): string {

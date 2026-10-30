@@ -5,6 +5,7 @@ import MoviePlayerModal from '../components/MoviePlayerModal.js';
 import SeriesDrawer from '../components/SeriesDrawer.js';
 import FranchiseDrawer from '../components/FranchiseDrawer.js';
 import DriveFolderBrowser from '../components/DriveFolderBrowser.js';
+import CarouselRow from '../components/CarouselRow.js';
 import type { MediaItem, Series, ContentCategory, StorageDrive } from '../../shared/types.js';
 import { api, type RecentItem, type RecentEpisodeItem } from '../lib/api.js';
 
@@ -41,6 +42,8 @@ const Home: React.FC = () => {
   const [drawer, setDrawer] = useState<DrawerState>({ type: 'none' });
   const [recent, setRecent] = useState<{ movies: RecentItem[]; episodes: RecentEpisodeItem[] } | null>(null);
   const [heroItem, setHeroItem] = useState<MediaItem | null>(null);
+  const [moviesLayout, setMoviesLayout] = useState<'carousel' | 'grid'>('carousel');
+  const [seriesLayout, setSeriesLayout] = useState<'carousel' | 'grid'>('carousel');
 
   const debouncedSearch = useDebounce(search, 350);
 
@@ -100,6 +103,23 @@ const Home: React.FC = () => {
       console.error(err);
     }
   }, []);
+
+  const handleRemoveProgress = async (type: 'movie' | 'episode', id: number) => {
+    try {
+      setRecent((prev) => {
+        if (!prev) return null;
+        if (type === 'movie') {
+          return { ...prev, movies: prev.movies.filter((m) => m.mediaId !== id) };
+        } else {
+          return { ...prev, episodes: prev.episodes.filter((e) => e.mediaId !== id) };
+        }
+      });
+      await api.progress.delete(type, id);
+    } catch (err) {
+      console.error('Failed to remove from continue watching:', err);
+      api.progress.recent().then(setRecent).catch(() => {});
+    }
+  };
 
   const showFranchises = category === 'all' || category === 'franchise';
   const showMovies = category === 'all' || category === 'movie' || category === 'animated';
@@ -317,11 +337,16 @@ const Home: React.FC = () => {
 
         {/* ── Continue Watching ────────────────────────────────────────────── */}
         {category === 'all' && !debouncedSearch && recent && (recent.movies.length > 0 || recent.episodes.length > 0) && (
-          <section>
-            <h2 className="section-title mb-3">⏱ Continue Watching</h2>
-            <div className="scroll-row">
+          <section id="continue-watching-section">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="section-title">⏱ Continue Watching</h2>
+              <span className="text-surface-500 text-xs">
+                {recent.movies.length + recent.episodes.length} in progress
+              </span>
+            </div>
+            <CarouselRow id="continue-watching-carousel">
               {recent.movies.map((item) => (
-                <div key={item.mediaId} className="flex-shrink-0 w-36 md:w-44">
+                <div key={`cw-movie-${item.mediaId}`} className="flex-shrink-0 w-36 sm:w-44 md:w-48">
                   <MovieCard
                     movie={{
                       id: item.mediaId,
@@ -343,12 +368,13 @@ const Home: React.FC = () => {
                     }}
                     onClick={() => void openMovie(item.mediaId)}
                     progress={item.percentComplete}
+                    onRemove={() => void handleRemoveProgress('movie', item.mediaId)}
                     className="w-full"
                   />
                 </div>
               ))}
               {recent.episodes.map((item) => (
-                <div key={item.mediaId} className="flex-shrink-0 w-36 md:w-44">
+                <div key={`cw-episode-${item.mediaId}`} className="flex-shrink-0 w-36 sm:w-44 md:w-48">
                   <SeriesCard
                     series={{
                       id: item.mediaId,
@@ -363,17 +389,18 @@ const Home: React.FC = () => {
                       updatedAt: '',
                     }}
                     onClick={() => setDrawer({ type: 'series', id: item.mediaId })}
+                    onRemove={() => void handleRemoveProgress('episode', item.mediaId)}
                     className="w-full"
                   />
                 </div>
               ))}
-            </div>
+            </CarouselRow>
           </section>
         )}
 
         {/* ── Franchises ───────────────────────────────────────────────────── */}
         {showFranchises && data && data.franchises.length > 0 && (
-          <section>
+          <section id="franchises-section">
             <div className="flex items-center justify-between mb-3">
               <h2 className="section-title">
                 {debouncedSearch ? '🎭 Matching Franchises' : '🎭 Franchise Collections'}
@@ -387,7 +414,7 @@ const Home: React.FC = () => {
                 </button>
               )}
             </div>
-            <div className="scroll-row">
+            <CarouselRow id="franchises-carousel">
               {data.franchises.map((f) => (
                 <FranchiseBanner
                   key={f.id}
@@ -399,35 +426,83 @@ const Home: React.FC = () => {
                   onClick={() => setDrawer({ type: 'franchise', id: f.id })}
                 />
               ))}
-            </div>
+            </CarouselRow>
           </section>
         )}
 
         {/* ── Movies ──────────────────────────────────────────────────────── */}
         {showMovies && (!debouncedSearch || (data && data.movies.length > 0) || loading) && (
-          <section>
+          <section id="movies-section">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="section-title">
-                {debouncedSearch ? '🎬 Movies' : (category === 'animated' ? '✨ Animated Films' : '🎬 Movies')}
-              </h2>
-              {data && (
-                <span className="text-surface-500 text-sm">{data.movies.length} titles</span>
-              )}
+              <div className="flex items-center gap-3">
+                <h2 className="section-title">
+                  {debouncedSearch ? '🎬 Movies' : (category === 'animated' ? '✨ Animated Films' : '🎬 Movies')}
+                </h2>
+                {data && (
+                  <span className="text-surface-500 text-sm">{data.movies.length} titles</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {category === 'all' && !debouncedSearch && data && data.movies.length > 6 && (
+                  <div className="hidden sm:flex items-center bg-surface-900 border border-surface-800 rounded-lg p-0.5 text-xs">
+                    <button
+                      onClick={() => setMoviesLayout('carousel')}
+                      className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                        moviesLayout === 'carousel' ? 'bg-surface-800 text-white font-medium shadow-sm' : 'text-surface-400 hover:text-white'
+                      }`}
+                      title="Carousel View"
+                    >
+                      <span>☰ Carousel</span>
+                    </button>
+                    <button
+                      onClick={() => setMoviesLayout('grid')}
+                      className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                        moviesLayout === 'grid' ? 'bg-surface-800 text-white font-medium shadow-sm' : 'text-surface-400 hover:text-white'
+                      }`}
+                      title="Grid View"
+                    >
+                      <span>☷ Grid</span>
+                    </button>
+                  </div>
+                )}
+                {category === 'all' && !debouncedSearch && (
+                  <button
+                    className="text-brand-400 text-sm font-medium hover:text-brand-300"
+                    onClick={() => setCategory('movie')}
+                  >
+                    See All
+                  </button>
+                )}
+              </div>
             </div>
             {loading ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
                 {[...Array(7)].map((_, i) => <SkeletonCard key={i} />)}
               </div>
             ) : data && data.movies.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
-                {data.movies.map((movie) => (
-                  <MovieCard
-                    key={movie.id}
-                    movie={movie}
-                    onClick={() => void openMovie(movie.id)}
-                  />
-                ))}
-              </div>
+              moviesLayout === 'carousel' && category === 'all' && !debouncedSearch ? (
+                <CarouselRow id="movies-carousel">
+                  {data.movies.map((movie) => (
+                    <div key={movie.id} className="flex-shrink-0 w-36 sm:w-44 md:w-52">
+                      <MovieCard
+                        movie={movie}
+                        onClick={() => void openMovie(movie.id)}
+                        className="w-full"
+                      />
+                    </div>
+                  ))}
+                </CarouselRow>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
+                  {data.movies.map((movie) => (
+                    <MovieCard
+                      key={movie.id}
+                      movie={movie}
+                      onClick={() => void openMovie(movie.id)}
+                    />
+                  ))}
+                </div>
+              )
             ) : (
               <EmptyState label="No movies found" />
             )}
@@ -436,29 +511,77 @@ const Home: React.FC = () => {
 
         {/* ── Series ──────────────────────────────────────────────────────── */}
         {showSeries && (!debouncedSearch || (data && data.series.length > 0) || loading) && (
-          <section>
+          <section id="series-section">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="section-title">
-                {debouncedSearch ? '📺 TV Series' : (category === 'animated' ? '✨ Animated Series' : '📺 TV Series')}
-              </h2>
-              {data && (
-                <span className="text-surface-500 text-sm">{data.series.length} shows</span>
-              )}
+              <div className="flex items-center gap-3">
+                <h2 className="section-title">
+                  {debouncedSearch ? '📺 TV Series' : (category === 'animated' ? '✨ Animated Series' : '📺 TV Series')}
+                </h2>
+                {data && (
+                  <span className="text-surface-500 text-sm">{data.series.length} shows</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {category === 'all' && !debouncedSearch && data && data.series.length > 6 && (
+                  <div className="hidden sm:flex items-center bg-surface-900 border border-surface-800 rounded-lg p-0.5 text-xs">
+                    <button
+                      onClick={() => setSeriesLayout('carousel')}
+                      className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                        seriesLayout === 'carousel' ? 'bg-surface-800 text-white font-medium shadow-sm' : 'text-surface-400 hover:text-white'
+                      }`}
+                      title="Carousel View"
+                    >
+                      <span>☰ Carousel</span>
+                    </button>
+                    <button
+                      onClick={() => setSeriesLayout('grid')}
+                      className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                        seriesLayout === 'grid' ? 'bg-surface-800 text-white font-medium shadow-sm' : 'text-surface-400 hover:text-white'
+                      }`}
+                      title="Grid View"
+                    >
+                      <span>☷ Grid</span>
+                    </button>
+                  </div>
+                )}
+                {category === 'all' && !debouncedSearch && (
+                  <button
+                    className="text-brand-400 text-sm font-medium hover:text-brand-300"
+                    onClick={() => setCategory('series')}
+                  >
+                    See All
+                  </button>
+                )}
+              </div>
             </div>
             {loading ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
                 {[...Array(7)].map((_, i) => <SkeletonCard key={i} />)}
               </div>
             ) : data && data.series.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
-                {data.series.map((series) => (
-                  <SeriesCard
-                    key={series.id}
-                    series={series}
-                    onClick={() => setDrawer({ type: 'series', id: series.id })}
-                  />
-                ))}
-              </div>
+              seriesLayout === 'carousel' && category === 'all' && !debouncedSearch ? (
+                <CarouselRow id="series-carousel">
+                  {data.series.map((series) => (
+                    <div key={series.id} className="flex-shrink-0 w-36 sm:w-44 md:w-52">
+                      <SeriesCard
+                        series={series}
+                        onClick={() => setDrawer({ type: 'series', id: series.id })}
+                        className="w-full"
+                      />
+                    </div>
+                  ))}
+                </CarouselRow>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 sm:gap-5 md:gap-6">
+                  {data.series.map((series) => (
+                    <SeriesCard
+                      key={series.id}
+                      series={series}
+                      onClick={() => setDrawer({ type: 'series', id: series.id })}
+                    />
+                  ))}
+                </div>
+              )
             ) : (
               <EmptyState label="No series found" />
             )}

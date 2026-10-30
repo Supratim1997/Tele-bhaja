@@ -108,7 +108,7 @@ async function main() {
 
     // Auto-scan on startup
     if (config.scanner.onStartup) {
-      console.log('[Scanner] Auto-scan starting across configured drives...');
+      console.log(`[Scanner] Auto-scan starting across ${config.mediaStoragePaths.length} configured drive(s): ${config.mediaStoragePaths.join('; ')}`);
       scanner.scan(config.mediaStoragePaths).catch((err: Error) => {
         console.error(`[Scanner] Startup scan failed: ${err.message}`);
       });

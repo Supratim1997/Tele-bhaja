@@ -1,4 +1,4 @@
-@echo off
+nchis@echo off
 :: ─────────────────────────────────────────────────────────────────────────────
 :: TeleBhaja — Native startup script for Windows
 :: Usage: run.bat [optional_media_path]
@@ -22,14 +22,30 @@ if exist .env (
   )
 )
 
-:: Allow override from arg
-if not "%~1"=="" (
-  if /i "%~1"=="--dev" (
+:: Parse all command-line arguments (supports multiple drives, quotes, spaces, and --dev)
+set DEV_MODE=false
+set COLLECTED_PATHS=
+
+for %%A in (%*) do (
+  set "TOKEN=%%~A"
+  if /i "!TOKEN!"=="--dev" (
     set DEV_MODE=true
-    if not "%~2"=="" set MEDIA_STORAGE_PATH=%~2
-  ) else (
-    set MEDIA_STORAGE_PATH=%~1
+  ) else if not "!TOKEN!"=="" (
+    :: Strip any remaining stray quotes
+    set "TOKEN=!TOKEN:"=!"
+    if not "!TOKEN!"=="" (
+      if "!COLLECTED_PATHS!"=="" (
+        set "COLLECTED_PATHS=!TOKEN!"
+      ) else (
+        set "COLLECTED_PATHS=!COLLECTED_PATHS!;!TOKEN!"
+      )
+    )
   )
+)
+
+:: Override MEDIA_STORAGE_PATH if paths were provided as arguments
+if not "!COLLECTED_PATHS!"=="" (
+  set "MEDIA_STORAGE_PATH=!COLLECTED_PATHS!"
 )
 
 :: Set defaults
@@ -56,7 +72,7 @@ if errorlevel 1 (
   )
 )
 
-:: Save to .env if .env doesn't exist, so 'npm run dev' also remembers it
+:: Save or update .env so future runs and dev servers remember configured paths
 if not exist .env (
   (
     echo PORT=%PORT%
@@ -67,11 +83,20 @@ if not exist .env (
     echo SCAN_ON_STARTUP=%SCAN_ON_STARTUP%
   ) > .env
   echo   [Saved] Media path saved to .env for future runs.
+) else (
+  if not "!COLLECTED_PATHS!"=="" (
+    node -e "const fs=require('fs'); let c=fs.readFileSync('.env','utf8'); if (/^MEDIA_STORAGE_PATH=/m.test(c)) { c=c.replace(/^MEDIA_STORAGE_PATH=.*$/m, 'MEDIA_STORAGE_PATH=' + process.env.MEDIA_STORAGE_PATH); } else { c += '\nMEDIA_STORAGE_PATH=' + process.env.MEDIA_STORAGE_PATH; } fs.writeFileSync('.env', c);" 2>nul
+    echo   [Saved] Updated MEDIA_STORAGE_PATH in .env for future runs.
+  )
 )
 
 echo.
-echo   Media Path : %MEDIA_STORAGE_PATH%
-echo   Port       : %PORT%
+echo   Media Storage Path(s):
+for %%P in ("!MEDIA_STORAGE_PATH:;=" "!") do (
+  set "P_CLEAN=%%~P"
+  if not "!P_CLEAN!"=="" echo     - !P_CLEAN!
+)
+echo   Port                 : %PORT%
 echo.
 
 :: Check Node.js

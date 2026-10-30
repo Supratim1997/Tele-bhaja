@@ -259,6 +259,24 @@ async function run() {
     });
     assert(oobRes.status === 416, `Out of bounds range returns HTTP 416 (got ${oobRes.status})`);
 
+    // Stream diagnostic telemetry endpoint
+    const clientErrRes = await makeRequest(server, '/api/stream/log-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mediaType: 'movie',
+        mediaId: testMovie.id,
+        title: testMovie.title,
+        errorCode: 3,
+        errorMessage: 'MEDIA_ERR_DECODE test error',
+        currentTime: 42,
+        src: `/api/stream/movie/${testMovie.id}`,
+      }),
+    });
+    assert(clientErrRes.status === 200, 'POST /api/stream/log-error returns 200');
+    const clientErrBody = JSON.parse(clientErrRes.body);
+    assert(clientErrBody.ok === true, 'Stream error telemetry reports ok: true');
+
     // Test 7: Subtitle conversion on-the-fly (.srt to WebVTT)
     console.log('\n6. Testing Subtitle On-the-Fly WebVTT Streaming:');
     const subRes = await makeRequest(server, `/api/stream/subtitle?path=${encodeURIComponent(path.join(TEST_DIR, 'English/Test Film Feature (2010)/Test.Film.Feature.2010.1080p.en.srt'))}`);
@@ -287,6 +305,15 @@ async function run() {
     assert(recentRes.status === 200, 'GET /api/progress/recent/all returns 200');
     const recentData = JSON.parse(recentRes.body);
     assert(recentData.movies.some((m: any) => m.mediaId === testMovie.id), 'Recent watches includes updated movie');
+
+    // Remove from in-progress / watch history
+    const deleteProgressRes = await makeRequest(server, `/api/progress/movie/${testMovie.id}`, {
+      method: 'DELETE',
+    });
+    assert(deleteProgressRes.status === 200, 'DELETE /api/progress/movie/:id returns 200');
+    const recentAfterDel = await makeRequest(server, '/api/progress/recent/all');
+    const recentAfterDelData = JSON.parse(recentAfterDel.body);
+    assert(!recentAfterDelData.movies.some((m: any) => m.mediaId === testMovie.id), 'Movie was removed from in-progress list');
 
     // Test 8: Content Control & Categorization Portal
     console.log('\n8. Testing Content Control & Categorization Portal:');

@@ -69,38 +69,54 @@ export class TranscodingService {
 
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const jobKey = `${inputPath}:${opts.seekTime ?? 0}:${opts.audioTrackIndex ?? 0}`;
+    let intentionalKill = false;
+    const stderrLines: string[] = [];
 
     this.activeJobs.set(jobKey, proc);
 
     proc.stdout.pipe(output);
 
     proc.stderr.on('data', (data: Buffer) => {
-      // Suppress noisy ffmpeg stderr unless debugging
+      const text = data.toString();
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      for (const line of lines) {
+        stderrLines.push(line);
+        if (stderrLines.length > 40) stderrLines.shift();
+      }
       if (process.env.FFMPEG_DEBUG) {
         process.stderr.write(data);
       }
     });
 
     proc.on('error', (err) => {
-      if (!err.message.includes('EPIPE')) {
-        console.error(`[Transcode] FFmpeg error: ${err.message}`);
-      }
       this.activeJobs.delete(jobKey);
+      if (!intentionalKill && !err.message.includes('EPIPE')) {
+        console.error(`[Transcode Error] FFmpeg spawn error for "${inputPath}": ${err.message}`);
+      }
       output.destroy(err);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code, signal) => {
       this.activeJobs.delete(jobKey);
-      if (code !== 0 && code !== null) {
+      if (!intentionalKill && code !== 0 && code !== null && signal !== 'SIGKILL' && signal !== 'SIGTERM') {
+        console.error(`[Transcode Error] FFmpeg failed with exit code ${code} (signal: ${signal ?? 'none'}) for "${inputPath}"`);
+        if (stderrLines.length > 0) {
+          console.error(`[Transcode Error] FFmpeg stderr diagnostic tail:\n${stderrLines.slice(-15).join('\n')}`);
+        }
         output.destroy(new Error(`FFmpeg exited with code ${code}`));
       } else {
-        output.end();
+        if (code !== 0 && code !== null && !intentionalKill) {
+          output.destroy(new Error(`FFmpeg stopped (${signal || code})`));
+        } else {
+          output.end();
+        }
       }
     });
 
     // Allow caller to destroy and kill ffmpeg
     const origDestroy = output.destroy.bind(output);
     output.destroy = (err?: Error) => {
+      intentionalKill = true;
       try { proc.kill('SIGKILL'); } catch { /* ignore */ }
       this.activeJobs.delete(jobKey);
       return origDestroy(err);

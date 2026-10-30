@@ -7,16 +7,40 @@ export const streamRouter = Router();
 
 // ── GET /api/stream/movie/:id ──────────────────────────────────────────────
 streamRouter.get('/movie/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
-  await streamingService.streamMovie(req, res, id);
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
+    await streamingService.streamMovie(req, res, id);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Stream Route Error] GET /movie/${req.params.id}:`, msg);
+    if (!res.headersSent) res.status(500).json({ error: msg });
+  }
 });
 
 // ── GET /api/stream/episode/:id ────────────────────────────────────────────
 streamRouter.get('/episode/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
-  await streamingService.streamEpisode(req, res, id);
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
+    await streamingService.streamEpisode(req, res, id);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Stream Route Error] GET /episode/${req.params.id}:`, msg);
+    if (!res.headersSent) res.status(500).json({ error: msg });
+  }
+});
+
+// ── POST /api/stream/log-error ─────────────────────────────────────────────
+// Diagnostic telemetry endpoint: client reports stream stalls or playback failures
+streamRouter.post('/log-error', (req, res) => {
+  const { mediaType, mediaId, title, errorCode, errorMessage, currentTime, src } = req.body ?? {};
+  const timeStr = typeof currentTime === 'number' ? `${Math.round(currentTime)}s` : 'start';
+  console.error(
+    `[Player Error Report] ${mediaType ?? 'media'} #${mediaId ?? '?'} "${title ?? 'Unknown'}" halted at ${timeStr}: ` +
+    `[Code ${errorCode ?? '?'}] ${errorMessage ?? 'No error message'} | URL: ${src ?? '?'}`
+  );
+  res.json({ ok: true });
 });
 
 // ── GET /api/stream/thumbnail/movie/:id ───────────────────────────────────

@@ -1,5 +1,5 @@
 import React, {
-  useRef, useState, useEffect, useCallback, forwardRef,
+  useRef, useState, useEffect, useCallback,
 } from 'react';
 import { useWatchProgress } from '../hooks/useMedia.js';
 import type { AudioTrack, SubtitleTrack } from '../../shared/types.js';
@@ -36,14 +36,19 @@ const Player: React.FC<PlayerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const doubleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tapSideRef = useRef<'left' | 'right' | null>(null);
+  const lastTapRef = useRef<number>(0);
+  const lastTouchTimeRef = useRef<number>(0);
+  const lastFsToggleRef = useRef<number>(0);
+  const volumeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [currentSrc, setCurrentSrc] = useState(src);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [volumeToast, setVolumeToast] = useState<{ volume: number; muted: boolean } | null>(null);
   const [controlsState, setControlsState] = useState<ControlsState>('visible');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSubMenu, setShowSubMenu] = useState<'audio' | 'subtitle' | 'speed' | null>(null);
@@ -51,8 +56,15 @@ const Player: React.FC<PlayerProps> = ({
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
-  const [seekIndicator, setSeekIndicator] = useState<{ side: 'left' | 'right'; count: number } | null>(null);
   const [skipAnimation, setSkipAnimation] = useState<'left' | 'right' | null>(null);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [playerError, setPlayerError] = useState<{
+    code?: number;
+    title: string;
+    message: string;
+    details?: string;
+    canForceTranscode?: boolean;
+  } | null>(null);
 
   const {
     initialPosition,
@@ -66,11 +78,23 @@ const Player: React.FC<PlayerProps> = ({
 
   const promptHandledRef = useRef(false);
 
+  // Sync internal src state if prop changes
+  useEffect(() => {
+    setCurrentSrc(src);
+    setPlayerError(null);
+    setIsBuffering(false);
+  }, [src]);
+
   // Reset handled flag when media changes
   useEffect(() => {
     promptHandledRef.current = false;
     setShowResumePrompt(false);
   }, [mediaId, mediaType]);
+
+  // Focus container on mount so keyboard shortcuts work immediately
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
 
   // Show resume prompt ONCE when media loads if saved position is significant (> 30s)
   useEffect(() => {
@@ -102,7 +126,7 @@ const Player: React.FC<PlayerProps> = ({
     if (videoRef.current) {
       videoRef.current.playbackRate = playbackSpeed;
     }
-  }, [playbackSpeed, src]);
+  }, [playbackSpeed, currentSrc]);
 
   // ── Controls visibility ─────────────────────────────────────────────────
   const showControls = useCallback(() => {
@@ -116,39 +140,73 @@ const Player: React.FC<PlayerProps> = ({
     }, 3500);
   }, []);
 
-  const handleVideoAreaTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-    const target = e.currentTarget as HTMLDivElement;
-    const rect = target.getBoundingClientRect();
-    let clientX: number;
+  // ── Fullscreen toggle ───────────────────────────────────────────────────
+  const toggleFullscreen = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastFsToggleRef.current < 350) return; // Debounce rapid triggers
+    lastFsToggleRef.current = now;
 
-    if ('touches' in e) {
-      clientX = e.changedTouches[0].clientX;
-    } else {
-      clientX = (e as React.MouseEvent).clientX;
+    const el = containerRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen?.();
+        // Force landscape on mobile devices
+        if ('orientation' in screen && 'lock' in screen.orientation) {
+          await (screen.orientation as ScreenOrientation & { lock: (o: string) => Promise<void> })
+            .lock('landscape').catch(() => {});
+        }
+      } else {
+        await document.exitFullscreen?.();
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle failed:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // ── Tap / Click Handling (Double tap for fullscreen) ────────────────────
+  const handleVideoAreaTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const isTouch = 'touches' in e || e.type === 'touchend';
+    const now = Date.now();
+
+    if (isTouch) {
+      lastTouchTimeRef.current = now;
+    } else if (now - lastTouchTimeRef.current < 500) {
+      // Ignore simulated mouse click directly after touch
+      return;
     }
 
-    const relX = clientX - rect.left;
-    const side = relX < rect.width / 2 ? 'left' : 'right';
+    const timeDiff = now - lastTapRef.current;
 
-    if (tapSideRef.current === side && doubleTapTimerRef.current) {
-      // Double-tap detected — seek ±10s
-      clearTimeout(doubleTapTimerRef.current);
-      doubleTapTimerRef.current = null;
-      tapSideRef.current = null;
-      skipSeconds(side === 'left' ? -10 : 10, side);
-    } else {
-      // First tap — start double-tap window
-      tapSideRef.current = side;
-      doubleTapTimerRef.current = setTimeout(() => {
-        // Single tap — toggle controls
-        tapSideRef.current = null;
+    if (timeDiff > 0 && timeDiff < 320) {
+      // Double tap detected: Toggle fullscreen mode
+      if (doubleTapTimerRef.current) {
+        clearTimeout(doubleTapTimerRef.current);
         doubleTapTimerRef.current = null;
+      }
+      lastTapRef.current = 0;
+      void toggleFullscreen();
+    } else {
+      // First tap: start window for double-tap detection
+      lastTapRef.current = now;
+      if (doubleTapTimerRef.current) clearTimeout(doubleTapTimerRef.current);
+      doubleTapTimerRef.current = setTimeout(() => {
+        lastTapRef.current = 0;
+        doubleTapTimerRef.current = null;
+        // Single tap: toggle controls visibility & play/pause
         setControlsState((s) => {
           if (s === 'hidden') {
             showControls();
             return 'visible';
           }
-          // Toggle play on single tap
           const vid = videoRef.current;
           if (vid) {
             if (vid.paused) { void vid.play(); }
@@ -156,18 +214,54 @@ const Player: React.FC<PlayerProps> = ({
           }
           return s;
         });
-      }, 250);
+      }, 280);
     }
-  }, [showControls]); // eslint-disable-line
+  }, [showControls, toggleFullscreen]);
 
   const skipSeconds = useCallback((delta: number, side: 'left' | 'right') => {
     const vid = videoRef.current;
     if (!vid) return;
-    vid.currentTime = Math.max(0, Math.min(vid.duration, vid.currentTime + delta));
+    vid.currentTime = Math.max(0, Math.min(vid.duration || 0, vid.currentTime + delta));
     setSkipAnimation(side);
     setTimeout(() => setSkipAnimation(null), 600);
     showControls();
   }, [showControls]);
+
+  // ── Volume & Mute HUD ───────────────────────────────────────────────────
+  const showVolumeToast = useCallback((vol: number, isMuted: boolean) => {
+    setVolumeToast({ volume: vol, muted: isMuted });
+    if (volumeToastTimerRef.current) clearTimeout(volumeToastTimerRef.current);
+    volumeToastTimerRef.current = setTimeout(() => {
+      setVolumeToast(null);
+    }, 1200);
+  }, []);
+
+  const changeVolume = useCallback((delta: number) => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const current = vid.muted ? 0 : vid.volume;
+    const newVol = Math.max(0, Math.min(1, Math.round((current + delta) * 10) / 10));
+    vid.volume = newVol;
+    setVolume(newVol);
+    if (vid.muted && newVol > 0) {
+      vid.muted = false;
+      setMuted(false);
+      showVolumeToast(newVol, false);
+    } else {
+      showVolumeToast(newVol, vid.muted);
+    }
+    showControls();
+  }, [showControls, showVolumeToast]);
+
+  const toggleMute = useCallback(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const nextMuted = !muted;
+    setMuted(nextMuted);
+    vid.muted = nextMuted;
+    showVolumeToast(vid.volume, nextMuted);
+    showControls();
+  }, [muted, showControls, showVolumeToast]);
 
   // ── Playback controls ───────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
@@ -191,31 +285,7 @@ const Player: React.FC<PlayerProps> = ({
     seek(ratio * duration);
   }, [duration, seek]);
 
-  // ── Fullscreen ──────────────────────────────────────────────────────────
-  const toggleFullscreen = useCallback(async () => {
-    const el = containerRef.current;
-    if (!el) return;
-    if (!document.fullscreenElement) {
-      await el.requestFullscreen?.();
-      // Force landscape on mobile
-      if ('orientation' in screen && 'lock' in screen.orientation) {
-        await (screen.orientation as ScreenOrientation & { lock: (o: string) => Promise<void> })
-          .lock('landscape').catch(() => {});
-      }
-    } else {
-      await document.exitFullscreen?.();
-    }
-  }, []);
-
-  useEffect(() => {
-    const onChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    };
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
-
-  // ── Video event handlers ────────────────────────────────────────────────
+  // ── Video event handlers & error management ─────────────────────────────
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -223,58 +293,200 @@ const Player: React.FC<PlayerProps> = ({
     const onTimeUpdate = () => {
       setCurrentTime(vid.currentTime);
       updatePosition(vid.currentTime, vid.duration);
-      // Buffered
       if (vid.buffered.length > 0) {
         setBuffered(vid.buffered.end(vid.buffered.length - 1));
       }
+      setIsBuffering(false);
     };
+
     const onDurationChange = () => setDuration(vid.duration);
-    const onPlay = () => { setPlaying(true); startHeartbeat(); showControls(); };
-    const onPause = () => { setPlaying(false); stopHeartbeat(); setControlsState('visible'); };
-    const onEnded = () => { setPlaying(false); stopHeartbeat(); setControlsState('visible'); };
+    const onPlay = () => {
+      setPlaying(true);
+      startHeartbeat();
+      showControls();
+      setPlayerError(null);
+    };
+    const onPause = () => {
+      setPlaying(false);
+      stopHeartbeat();
+      setControlsState('visible');
+      setIsBuffering(false);
+    };
+    const onEnded = () => {
+      setPlaying(false);
+      stopHeartbeat();
+      setControlsState('visible');
+      setIsBuffering(false);
+    };
+
+    // Buffering detection
+    const onWaiting = () => {
+      setIsBuffering(true);
+    };
+    const onStalled = () => {
+      if (!vid.paused && vid.readyState < 3) {
+        setIsBuffering(true);
+      }
+    };
+    const onSeeking = () => {
+      if (vid.readyState < 3) {
+        setIsBuffering(true);
+      }
+    };
+    const onCanPlay = () => {
+      setIsBuffering(false);
+    };
+    const onPlaying = () => {
+      setIsBuffering(false);
+      setPlayerError(null);
+    };
+
+    // Video error handling
+    const onError = () => {
+      setIsBuffering(false);
+      const err = vid.error;
+      let msg = 'Playback stopped due to an error.';
+      let canTranscode = !currentSrc.includes('transcode=1') && !needsTranscode;
+
+      if (err) {
+        switch (err.code) {
+          case 1: // MEDIA_ERR_ABORTED
+            msg = 'Playback aborted by user or browser.';
+            break;
+          case 2: // MEDIA_ERR_NETWORK
+            msg = 'A network error interrupted the stream. Check your server connection.';
+            break;
+          case 3: // MEDIA_ERR_DECODE
+            msg = 'Media decode error. The browser could not decode this video stream (incompatible audio/video codec).';
+            canTranscode = true;
+            break;
+          case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+            msg = 'The media format is not natively supported by your browser or the file could not be loaded.';
+            canTranscode = true;
+            break;
+        }
+      }
+
+      setPlayerError({
+        code: err?.code,
+        title: 'Playback Error',
+        message: msg,
+        details: err?.message || undefined,
+        canForceTranscode: canTranscode,
+      });
+
+      api.stream.logError({
+        mediaType,
+        mediaId,
+        title,
+        errorCode: err?.code,
+        errorMessage: msg,
+        currentTime: vid.currentTime,
+        src: vid.currentSrc || currentSrc,
+      });
+    };
 
     vid.addEventListener('timeupdate', onTimeUpdate);
     vid.addEventListener('durationchange', onDurationChange);
     vid.addEventListener('play', onPlay);
     vid.addEventListener('pause', onPause);
     vid.addEventListener('ended', onEnded);
+    vid.addEventListener('waiting', onWaiting);
+    vid.addEventListener('stalled', onStalled);
+    vid.addEventListener('seeking', onSeeking);
+    vid.addEventListener('canplay', onCanPlay);
+    vid.addEventListener('playing', onPlaying);
+    vid.addEventListener('error', onError);
+
     return () => {
       vid.removeEventListener('timeupdate', onTimeUpdate);
       vid.removeEventListener('durationchange', onDurationChange);
       vid.removeEventListener('play', onPlay);
       vid.removeEventListener('pause', onPause);
       vid.removeEventListener('ended', onEnded);
+      vid.removeEventListener('waiting', onWaiting);
+      vid.removeEventListener('stalled', onStalled);
+      vid.removeEventListener('seeking', onSeeking);
+      vid.removeEventListener('canplay', onCanPlay);
+      vid.removeEventListener('playing', onPlaying);
+      vid.removeEventListener('error', onError);
     };
-  }, [updatePosition, startHeartbeat, stopHeartbeat, showControls]);
+  }, [updatePosition, startHeartbeat, stopHeartbeat, showControls, mediaType, mediaId, title, currentSrc, needsTranscode]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.target !== document.body && e.target !== containerRef.current) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
       switch (e.key) {
-        case ' ': case 'k': e.preventDefault(); togglePlay(); break;
-        case 'ArrowLeft':   e.preventDefault(); skipSeconds(-10, 'left'); break;
-        case 'ArrowRight':  e.preventDefault(); skipSeconds(10, 'right'); break;
-        case 'f':           e.preventDefault(); void toggleFullscreen(); break;
-        case 'm':           e.preventDefault(); setMuted((m) => !m); break;
-        case 'Escape':      onClose?.(); break;
+        case ' ':
+        case 'k':
+        case 'K':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          skipSeconds(-10, 'left');
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          skipSeconds(10, 'right');
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          changeVolume(0.1);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          changeVolume(-0.1);
+          break;
+        case 'f':
+        case 'F':
+          e.preventDefault();
+          void toggleFullscreen();
+          break;
+        case 'm':
+        case 'M':
+          e.preventDefault();
+          toggleMute();
+          break;
+        case 'Escape':
+          if (document.fullscreenElement) {
+            void document.exitFullscreen?.();
+          } else {
+            onClose?.();
+          }
+          break;
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [togglePlay, skipSeconds, toggleFullscreen, onClose]);
+  }, [togglePlay, skipSeconds, changeVolume, toggleFullscreen, toggleMute, onClose]);
 
   // ── Audio track switching ───────────────────────────────────────────────
   const switchAudio = useCallback((trackIndex: number) => {
     setSelectedAudio(trackIndex);
-    // Re-request stream with audio index query param
     const vid = videoRef.current;
     if (!vid) return;
     const currentPos = vid.currentTime;
     const newSrc = `${src}${src.includes('?') ? '&' : '?'}audio=${trackIndex}&seek=${currentPos}`;
-    vid.src = newSrc;
-    void vid.play();
+    setCurrentSrc(newSrc);
     setShowSubMenu(null);
+    setIsBuffering(true);
+    setPlayerError(null);
+    vid.src = newSrc;
+    vid.load();
+    void vid.play().catch(() => {});
   }, [src]);
 
   // ── Subtitle track switching ────────────────────────────────────────────
@@ -308,6 +520,35 @@ const Player: React.FC<PlayerProps> = ({
     setShowSubMenu(null);
   }, []);
 
+  // ── Play with Transcoding (FFmpeg fallback) ─────────────────────────────
+  const playWithTranscoding = useCallback(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const pos = vid.currentTime || 0;
+    const base = src.split('?')[0];
+    const newSrc = `${base}?transcode=1&seek=${pos}&audio=${selectedAudio}`;
+    setCurrentSrc(newSrc);
+    setPlayerError(null);
+    setIsBuffering(true);
+    vid.src = newSrc;
+    vid.load();
+    void vid.play().catch((err) => {
+      console.warn('Play after transcode failed:', err);
+    });
+  }, [src, selectedAudio]);
+
+  // ── Retry Playback ──────────────────────────────────────────────────────
+  const retryPlayback = useCallback(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    setPlayerError(null);
+    setIsBuffering(true);
+    vid.load();
+    void vid.play().catch((err) => {
+      console.warn('Retry play failed:', err);
+    });
+  }, []);
+
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
 
@@ -315,21 +556,101 @@ const Player: React.FC<PlayerProps> = ({
     <div
       ref={containerRef}
       id="video-player-container"
-      className="relative w-full h-full bg-black select-none overflow-hidden"
+      tabIndex={0}
+      className="relative w-full h-full bg-black select-none overflow-hidden outline-none"
       style={{ touchAction: 'none' }}
       onMouseMove={showControls}
+      onClick={() => containerRef.current?.focus()}
     >
       {/* ── Video element ─────────────────────────────────────────────────── */}
       <video
         ref={videoRef}
         id="main-video"
+        src={currentSrc}
         className="w-full h-full object-contain"
         playsInline
         preload="metadata"
         muted={muted}
-      >
-        <source src={src} type={needsTranscode ? 'video/mp4' : mimeType} />
-      </video>
+      />
+
+      {/* ── Volume HUD toast ──────────────────────────────────────────────── */}
+      {volumeToast && (
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-fade-in">
+          <div className="glass-card px-4 py-2 flex items-center gap-2.5 rounded-full shadow-2xl bg-black/75 backdrop-blur-md border border-white/15">
+            {volumeToast.muted || volumeToast.volume === 0 ? (
+              <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M16.5 12A4.5 4.5 0 0014 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+              </svg>
+            )}
+            <div className="w-24 h-1.5 bg-white/20 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-brand-500 rounded-full transition-all duration-150"
+                style={{ width: `${volumeToast.muted ? 0 : Math.round(volumeToast.volume * 100)}%` }}
+              />
+            </div>
+            <span className="text-white text-xs font-mono font-semibold min-w-8 text-right">
+              {volumeToast.muted ? '0%' : `${Math.round(volumeToast.volume * 100)}%`}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Buffering indicator ───────────────────────────────────────────── */}
+      {isBuffering && !playerError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] z-25 pointer-events-none animate-fade-in">
+          <div className="w-14 h-14 rounded-full border-4 border-brand-500/20 border-t-brand-500 animate-spin mb-3 shadow-xl" />
+          <span className="text-white text-sm font-semibold tracking-wider drop-shadow-md">Buffering...</span>
+        </div>
+      )}
+
+      {/* ── Playback error overlay ────────────────────────────────────────── */}
+      {playerError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-md z-40 p-6 animate-fade-in">
+          <div className="glass-card max-w-md w-full p-6 flex flex-col items-center text-center shadow-2xl border border-red-500/30">
+            <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mb-4">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 className="text-white text-lg font-bold mb-2">{playerError.title}</h3>
+            <p className="text-surface-300 text-sm mb-4 leading-relaxed">{playerError.message}</p>
+            {playerError.details && (
+              <p className="text-surface-400 text-xs font-mono bg-surface-900/80 px-3 py-1.5 rounded-md mb-4 max-w-full truncate">
+                {playerError.details}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center justify-center gap-3 w-full">
+              <button
+                onClick={retryPlayback}
+                className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold transition-colors shadow-md"
+              >
+                Retry Playback
+              </button>
+              {playerError.canForceTranscode && (
+                <button
+                  onClick={playWithTranscoding}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-colors shadow-md"
+                  title="Transcode on-the-fly with FFmpeg for browser compatibility"
+                >
+                  Play with Transcoding
+                </button>
+              )}
+              {onClose && (
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 bg-surface-700 hover:bg-surface-600 text-surface-200 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Resume prompt ─────────────────────────────────────────────────── */}
       {showResumePrompt && (
@@ -397,11 +718,16 @@ const Player: React.FC<PlayerProps> = ({
         </div>
       )}
 
-      {/* ── Tap/click area (covers most of screen for double-tap seek) ─────── */}
+      {/* ── Tap/click area (covers screen for double-tap fullscreen and single-tap controls) ─────── */}
       <div
         className="absolute inset-0 z-10"
         onClick={handleVideoAreaTap}
         onTouchEnd={handleVideoAreaTap}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void toggleFullscreen();
+        }}
         style={{ touchAction: 'manipulation' }}
       />
 
@@ -412,8 +738,10 @@ const Player: React.FC<PlayerProps> = ({
         }`}
       >
         {/* Top bar */}
-        <div className="flex items-center justify-between px-4 pt-safe pt-4 pb-8"
-          style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%)' }}>
+        <div
+          className="flex items-center justify-between px-4 pt-safe pt-4 pb-8"
+          style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%)' }}
+        >
           <button
             id="player-back-btn"
             className="player-btn w-10 h-10 bg-black/40 hover:bg-black/60 pointer-events-auto"
@@ -623,10 +951,10 @@ const Player: React.FC<PlayerProps> = ({
               <button
                 id="mute-btn"
                 className="player-btn w-9 h-9 text-white"
-                onClick={() => setMuted((m) => !m)}
+                onClick={toggleMute}
               >
-                {muted ? (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                {muted || volume === 0 ? (
+                  <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M16.5 12A4.5 4.5 0 0014 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
                   </svg>
                 ) : (

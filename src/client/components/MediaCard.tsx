@@ -9,9 +9,10 @@ interface MovieCardProps {
   onClick: () => void;
   progress?: number; // 0-100
   className?: string;
+  onRemove?: () => void;
 }
 
-export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress, className }) => {
+export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress, className, onRemove }) => {
   const [thumbError, setThumbError] = useState(false);
 
   const posterUrl = movie.posterPath ?? api.stream.thumbnailMovieUrl(movie.id);
@@ -44,19 +45,38 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick, progress, 
         <div className="card-overlay" />
 
         {/* Badges */}
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
+        <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
           {movie.isAnimated && (
             <span className="badge bg-purple-600/80 text-purple-100 text-[10px]">✨ Animated</span>
           )}
         </div>
 
-        {/* Rating */}
-        {movie.tmdbRating && movie.tmdbRating > 0 && (
-          <div className="absolute top-2 right-2">
-            <span className="badge bg-yellow-500/80 text-yellow-100 text-[10px]">
-              ★ {movie.tmdbRating.toFixed(1)}
-            </span>
-          </div>
+        {/* Remove button (Continue Watching) */}
+        {onRemove ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onRemove();
+            }}
+            className="absolute top-2 right-2 z-20 w-6 h-6 rounded-full bg-black/80 hover:bg-red-600 text-white/80 hover:text-white flex items-center justify-center transition-all duration-150 shadow-md border border-white/20 hover:scale-110 active:scale-95"
+            title="Remove from Continue Watching"
+            aria-label={`Remove ${movie.title} from Continue Watching`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        ) : (
+          /* Rating */
+          movie.tmdbRating && movie.tmdbRating > 0 ? (
+            <div className="absolute top-2 right-2 z-10">
+              <span className="badge bg-yellow-500/80 text-yellow-100 text-[10px]">
+                ★ {movie.tmdbRating.toFixed(1)}
+              </span>
+            </div>
+          ) : null
         )}
 
         {/* Card info (shown on hover) */}
@@ -93,9 +113,10 @@ interface SeriesCardProps {
   series: Series;
   onClick: () => void;
   className?: string;
+  onRemove?: () => void;
 }
 
-export const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, className }) => {
+export const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, className, onRemove }) => {
   const [thumbError, setThumbError] = useState(false);
 
   return (
@@ -124,11 +145,30 @@ export const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, classNa
 
         <div className="card-overlay" />
 
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
+        <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
           {series.isAnimated && (
             <span className="badge bg-purple-600/80 text-purple-100 text-[10px]">✨ Anime</span>
           )}
         </div>
+
+        {/* Remove button (Continue Watching) */}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onRemove();
+            }}
+            className="absolute top-2 right-2 z-20 w-6 h-6 rounded-full bg-black/80 hover:bg-red-600 text-white/80 hover:text-white flex items-center justify-center transition-all duration-150 shadow-md border border-white/20 hover:scale-110 active:scale-95"
+            title="Remove from Continue Watching"
+            aria-label={`Remove ${series.title} from Continue Watching`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
 
         <div className="card-info">
           <p className="text-white text-xs font-semibold line-clamp-2">{series.title}</p>

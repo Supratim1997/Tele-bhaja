@@ -25,11 +25,13 @@ export class StreamingService {
     } | undefined;
 
     if (!item || item.is_excluded === 1) {
+      console.warn(`[Stream Warning] Movie #${id} not found or excluded from playback.`);
       res.status(404).json({ error: 'Media not found or excluded from playback' });
       return;
     }
 
     if (!fs.existsSync(item.file_path)) {
+      console.error(`[Stream Error] File not found on disk for movie #${id}: "${item.file_path}"`);
       res.status(404).json({ error: 'File not found on disk' });
       return;
     }
@@ -52,11 +54,13 @@ export class StreamingService {
     } | undefined;
 
     if (!item || item.is_excluded === 1) {
+      console.warn(`[Stream Warning] Episode #${id} not found or excluded from playback.`);
       res.status(404).json({ error: 'Episode not found or excluded from playback' });
       return;
     }
 
     if (!fs.existsSync(item.file_path)) {
+      console.error(`[Stream Error] File not found on disk for episode #${id}: "${item.file_path}"`);
       res.status(404).json({ error: 'File not found on disk' });
       return;
     }
@@ -98,13 +102,25 @@ export class StreamingService {
       });
       const stream = fs.createReadStream(filePath);
       stream.pipe(res);
-      stream.on('error', () => res.end());
+      stream.on('error', (err) => {
+        console.error(`[Stream Error] ReadStream failed for "${filePath}":`, err.message);
+        if (!res.headersSent) res.status(500).end();
+        else res.destroy(err);
+      });
+      res.on('error', (err) => {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EPIPE' && code !== 'ECONNRESET') {
+          console.error(`[Stream Socket Error] Socket error for "${filePath}":`, err.message);
+        }
+      });
+      req.on('close', () => stream.destroy());
       return;
     }
 
     // Parse Range header: "bytes=start-end"
     const rangeMatch = rangeHeader.match(/bytes=(\d*)-(\d*)/);
     if (!rangeMatch) {
+      console.error(`[Stream Error] Invalid Range header "${rangeHeader}" for "${filePath}"`);
       res.status(400).json({ error: 'Invalid Range header' });
       return;
     }
@@ -117,6 +133,7 @@ export class StreamingService {
 
     // Validate range per RFC 7233
     if (isNaN(start) || start < 0 || start >= fileSize || (endStr && start > end)) {
+      console.warn(`[Stream Warning] Unsatisfiable range "${rangeHeader}" for "${filePath}" (size: ${fileSize})`);
       res.status(416).set({
         'Content-Range': `bytes */${fileSize}`,
       }).end();
@@ -139,8 +156,15 @@ export class StreamingService {
     const stream = fs.createReadStream(filePath, { start, end });
     stream.pipe(res);
     stream.on('error', (err) => {
-      console.error('Stream error:', err);
+      console.error(`[Stream Error] ReadStream error for "${filePath}" [${start}-${end}]:`, err.message);
       if (!res.headersSent) res.status(500).end();
+      else res.destroy(err);
+    });
+    res.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EPIPE' && code !== 'ECONNRESET') {
+        console.error(`[Stream Socket Error] Socket error for "${filePath}":`, err.message);
+      }
     });
     req.on('close', () => stream.destroy());
   }
@@ -155,6 +179,8 @@ export class StreamingService {
 
     // Request audio track by index (?audio=1)
     const audioTrackIndex = parseInt(String(req.query.audio ?? '0'), 10) || 0;
+
+    console.log(`[Stream Transcode] Serving "${path.basename(filePath)}" (seek: ${seekTime}s, audio: track ${audioTrackIndex})`);
 
     res.writeHead(200, {
       'Content-Type': 'video/mp4',
@@ -172,6 +198,23 @@ export class StreamingService {
     });
 
     proc.pipe(res);
+
+    proc.on('error', (err) => {
+      console.error(`[Stream Transcode Error] Pipeline error for "${filePath}":`, err.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Transcoding stream failed', details: err.message });
+      } else {
+        res.end();
+      }
+    });
+
+    res.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EPIPE' && code !== 'ECONNRESET') {
+        console.error(`[Stream Socket Error] Response error during transcode for "${filePath}":`, err.message);
+      }
+      proc.destroy();
+    });
 
     req.on('close', () => {
       proc.destroy();

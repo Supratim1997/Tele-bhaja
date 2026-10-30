@@ -27,12 +27,13 @@ export async function getStorageDrives(): Promise<StorageDrive[]> {
     const driveLetter = driveLetterMatch ? driveLetterMatch[1].toUpperCase() : '';
     const baseFolderName = path.basename(normPath) || driveLetter;
 
+    const folderSuffix = baseFolderName && baseFolderName !== driveLetter ? ` (${baseFolderName})` : '';
     const label = isPrimary
-      ? `Primary Drive (${driveLetter || normPath})`
-      : `Drive ${driveLetter ? driveLetter + ' ' : ''}(${baseFolderName})`;
+      ? `Primary Drive (${driveLetter || normPath}${folderSuffix})`
+      : `Drive ${driveLetter || normPath}${folderSuffix}`;
     const shortLabel = isPrimary
-      ? `💾 Primary (${driveLetter || 'D1'})`
-      : `💾 Drive ${driveLetter || ('D' + (i + 1))}`;
+      ? `💾 Primary (${baseFolderName || driveLetter || 'D1'})`
+      : `💾 ${baseFolderName || driveLetter || ('D' + (i + 1))}`;
 
     const pat1 = `${normPath}%`;
     const pat2 = `${normPath.replace(/\\/g, '/')}%`;

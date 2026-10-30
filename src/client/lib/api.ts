@@ -111,6 +111,18 @@ export const api = {
     thumbnailMovieUrl: (id: number) => `${BASE}/stream/thumbnail/movie/${id}`,
     thumbnailEpisodeUrl: (id: number) => `${BASE}/stream/thumbnail/episode/${id}`,
     subtitleUrl: (path: string) => `${BASE}/stream/subtitle?path=${encodeURIComponent(path)}`,
+    logError: (data: {
+      mediaType: 'movie' | 'episode';
+      mediaId: number;
+      title?: string;
+      errorCode?: number;
+      errorMessage?: string;
+      currentTime?: number;
+      src?: string;
+    }) => apiFetch<{ ok: boolean }>('/stream/log-error', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }).catch(() => ({ ok: false })),
   },
 
   control: {

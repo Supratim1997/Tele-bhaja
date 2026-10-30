@@ -7,7 +7,11 @@ A production-grade, self-hosted OTT streaming platform that reads directly from 
 ## 🌟 Key Features
 
 - **🎬 Netflix-Style Streaming Experience**:
-  - Full-screen HTML5 video player with keyboard controls, touch gesture skipping (double-tap ±10s), and screen orientation locking on mobile.
+  - Full-screen HTML5 video player with keyboard controls, touch gesture skipping, double-tap / double-click fullscreen toggle, and screen orientation locking on mobile.
+  - Interactive horizontal carousels with smooth Left (`‹`) and Right (`›`) scroll buttons across Continue Watching, Franchise Collections, Movies, and Series.
+  - Option to remove in-progress movies and episodes from Continue Watching with 1 click.
+  - Dynamic Buffering Indicators and In-Player Error Overlays with automatic on-the-fly FFmpeg transcode fallback.
+  - Comprehensive server-side CMD error logging for byte-range streaming, FFmpeg subprocesses, and client diagnostics.
   - Generous thumbnail grid spacing across all mobile, tablet, and desktop display sizes.
   - HTTP 206 Partial Content byte-range streaming for instant seeking.
   - Automatic on-the-fly subtitle conversion (SRT → WebVTT) with sub-second latency.
@@ -285,9 +289,30 @@ telebhaja/
 
 ---
 
+## ⌨️ Player Shortcuts & Streaming Controls
+
+TeleBhaja provides responsive keyboard shortcuts, touch gestures, and playback diagnostics:
+
+| Shortcut / Action | Platform | Function |
+|---|---|---|
+| `Space` or `k` | Desktop | Toggle Play / Pause |
+| `ArrowLeft` / `ArrowRight` | Desktop / TV | Instant 10-second seek backward / forward with animation |
+| `ArrowUp` / `ArrowDown` | Desktop / TV | Volume adjust (±10%) with animated top-center HUD level toast |
+| `f` or `F` | Desktop | Toggle Fullscreen mode |
+| `m` or `M` | Desktop | Toggle Mute |
+| `Double Click` | Desktop | Toggle Fullscreen mode |
+| `Double Tap` | Mobile / Touch | Toggle Fullscreen mode (with landscape orientation lock) |
+| `Single Tap` | Mobile / Touch | Toggle controls & play/pause |
+| `Speed (0.5x - 2.0x)` | All | Change playback rate on-the-fly |
+| `Audio / CC Track` | All | Switch embedded audio tracks and external WebVTT subtitles |
+| `Buffering Indicator` | All | Visual animated spinner overlay when network or stream stalls |
+| `Playback Error Overlay` | All | In-player diagnostics modal with **"Retry Playback"** and **"Play with Transcoding"** buttons |
+
+---
+
 ## 🧪 Testing & Verification
 
-TeleBhaja includes 94 automated unit and end-to-end integration tests:
+TeleBhaja includes 113 automated unit and end-to-end integration tests:
 
 ```bash
 # Run full test suite (parser heuristics + full integration pipeline)
@@ -301,7 +326,7 @@ npm run build
 ```
 
 ```text
-Results: 20 parser tests passed, 74 integration tests passed (94 total passing, 0 failed).
+Results: 20 parser tests passed, 93 integration tests passed (113 total passing, 0 failed).
 ```
 
 ---

@@ -36,7 +36,11 @@ export class MediaScanner extends EventEmitter {
       throw new Error('Scan already in progress');
     }
 
-    const paths = (Array.isArray(targetPaths) ? targetPaths : [targetPaths]).map((p) => p.trim()).filter(Boolean);
+    const rawList = Array.isArray(targetPaths) ? targetPaths : [targetPaths];
+    const paths = rawList
+      .flatMap((p) => String(p).split(/[;,|\r\n]+/))
+      .map((p) => p.replace(/^[ "']+|[ "']+$/g, '').trim())
+      .filter(Boolean);
     if (paths.length === 0) {
       throw new Error('No storage paths provided for scanning');
     }
