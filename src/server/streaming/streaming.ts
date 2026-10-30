@@ -8,6 +8,24 @@ import path from 'path';
 import type { Request, Response } from 'express';
 import { getDb } from '../db/database.js';
 import { transcodingService } from './transcoding.js';
+import { probeFile } from '../scanner/ffprobe.js';
+
+const h264Cache = new Map<string, boolean>();
+
+async function canCopyVideo(filePath: string): Promise<boolean> {
+  if (h264Cache.has(filePath)) {
+    return h264Cache.get(filePath)!;
+  }
+  try {
+    const probe = await probeFile(filePath);
+    const isH264 = probe.videoCodec === 'h264' || probe.videoCodec === 'avc1';
+    h264Cache.set(filePath, isH264);
+    return isH264;
+  } catch {
+    h264Cache.set(filePath, false);
+    return false;
+  }
+}
 
 export class StreamingService {
   /**
@@ -180,7 +198,9 @@ export class StreamingService {
     // Request audio track by index (?audio=1)
     const audioTrackIndex = parseInt(String(req.query.audio ?? '0'), 10) || 0;
 
-    console.log(`[Stream Transcode] Serving "${path.basename(filePath)}" (seek: ${seekTime}s, audio: track ${audioTrackIndex})`);
+    const copyVideo = await canCopyVideo(filePath);
+
+    console.log(`[Stream Transcode] Serving "${path.basename(filePath)}" (seek: ${seekTime}s, audio: track ${audioTrackIndex}, copyVideo: ${copyVideo})`);
 
     res.writeHead(200, {
       'Content-Type': 'video/mp4',
@@ -188,6 +208,7 @@ export class StreamingService {
       'Accept-Ranges': 'none',
       'Cache-Control': 'no-cache',
       'X-Transcoded': '1',
+      'X-Copy-Video': copyVideo ? '1' : '0',
     });
 
     const proc = transcodingService.createTranscodeStream(filePath, {
@@ -195,6 +216,7 @@ export class StreamingService {
       audioTrackIndex,
       videoBitrate: `${2000}k`,
       audioBitrate: '128k',
+      copyVideo,
     });
 
     proc.pipe(res);

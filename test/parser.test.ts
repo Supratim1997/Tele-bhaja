@@ -133,6 +133,20 @@ const testCases: TestCase[] = [
     expectedIsSeries: false,
     expectedFranchise: 'James Bond',
   },
+  {
+    path: 'E:/Media/Movies/The Bourne 3 Ultimatum (2007).mkv',
+    expectedTitle: 'The Bourne 3 Ultimatum',
+    expectedYear: 2007,
+    expectedIsSeries: false,
+    expectedFranchise: 'Jason Bourne',
+  },
+  {
+    path: 'E:/Media/Movies/The Man From Earth (2007).mp4',
+    expectedTitle: 'The Man From Earth',
+    expectedYear: 2007,
+    expectedIsSeries: false,
+    expectedFranchise: undefined,
+  },
   // 5. Special Edge Cases (Years in titles, generic filenames, custom movie directories)
   {
     path: 'E:/Media/Movies/1917 (2019).mkv',

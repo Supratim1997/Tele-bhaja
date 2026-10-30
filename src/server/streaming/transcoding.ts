@@ -17,6 +17,7 @@ export interface TranscodeOptions {
   videoBitrate?: string;
   audioBitrate?: string;
   maxDuration?: number;
+  copyVideo?: boolean;
 }
 
 export class TranscodingService {
@@ -44,28 +45,44 @@ export class TranscodingService {
       args.push('-t', String(opts.maxDuration));
     }
 
-    // Video codec — H.264 for universal browser support
-    // Using 0:a:X? makes the audio stream mapping optional if file has no audio
+    // Video & Audio mapping
     args.push(
       '-map', '0:v:0',
       '-map', `0:a:${opts.audioTrackIndex ?? 0}?`,
-      '-vcodec', 'libx264',
-      '-preset', 'ultrafast',
-      '-profile:v', 'high',
-      '-level', '4.1',
-      '-pix_fmt', 'yuv420p',
-      '-b:v', opts.videoBitrate ?? `${config.ffmpeg.videoBitrate}k`,
-      // Audio to AAC stereo
-      '-acodec', 'aac',
-      '-b:a', opts.audioBitrate ?? `${config.ffmpeg.audioBitrate}k`,
-      '-ac', '2',
-      '-ar', '48000',
-      // Fragmented MP4 output to stdout
-      '-f', 'mp4',
-      '-movflags', 'frag_keyframe+empty_moov+faststart',
-      '-avoid_negative_ts', 'make_zero',
-      'pipe:1',
     );
+
+    if (opts.copyVideo) {
+      // Remux compatible H.264 video stream without re-encoding
+      args.push(
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', opts.audioBitrate ?? `${config.ffmpeg.audioBitrate}k`,
+        '-ac', '2',
+        '-ar', '48000',
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-avoid_negative_ts', 'make_zero',
+        'pipe:1',
+      );
+    } else {
+      // Re-encode video to H.264 for incompatible codecs
+      args.push(
+        '-vcodec', 'libx264',
+        '-preset', 'ultrafast',
+        '-profile:v', 'high',
+        '-level', '4.1',
+        '-pix_fmt', 'yuv420p',
+        '-b:v', opts.videoBitrate ?? `${config.ffmpeg.videoBitrate}k`,
+        '-acodec', 'aac',
+        '-b:a', opts.audioBitrate ?? `${config.ffmpeg.audioBitrate}k`,
+        '-ac', '2',
+        '-ar', '48000',
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-avoid_negative_ts', 'make_zero',
+        'pipe:1',
+      );
+    }
 
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const jobKey = `${inputPath}:${opts.seekTime ?? 0}:${opts.audioTrackIndex ?? 0}`;

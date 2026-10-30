@@ -81,7 +81,7 @@ const FRANCHISE_MAP: Array<{ pattern: RegExp; franchise: string }> = [
   { pattern: /lord\s*of\s*the\s*rings|hobbit|tolkien|middle.?earth/i, franchise: 'Middle-Earth' },
   { pattern: /star\s*wars|jedi|sith|mandalorian|clone\s*wars|andor|obi.?wan|boba\s*fett/i, franchise: 'Star Wars' },
   { pattern: /fast\s*(&|and)\s*furious|fast\s+\d+|furious\s+\d+|hobbs\s*(&|and)\s*shaw/i, franchise: 'Fast & Furious' },
-  { pattern: /james\s*bond\b|007\b|casino\s*royale|skyfall|spectre|goldfinger|no\s*time\s*to\s*die/i, franchise: 'James Bond' },
+  { pattern: /james\s*bond\b|agent\s*007\b|\bbond\s*007\b|\b007\s*(?:bond|[:\-_])|casino\s*royale|skyfall|spectre|goldfinger|no\s*time\s*to\s*die|quantum\s*of\s*solace|goldeneye/i, franchise: 'James Bond' },
   { pattern: /mission\s*impossible/i, franchise: 'Mission: Impossible' },
   { pattern: /john\s*wick/i, franchise: 'John Wick' },
   { pattern: /matrix/i, franchise: 'The Matrix' },
@@ -460,6 +460,10 @@ function detectFranchiseOrder(baseName: string, title: string): number | undefin
   // Check suffix e.g. "Part 1", "Part 2", "Vol 1"
   const partMatch = title.match(/\b(?:part|vol|volume|chapter)\s*(\d{1,2})\b/i);
   if (partMatch) return parseInt(partMatch[1], 10);
+
+  // Check embedded number after a word e.g. "The Bourne 3 Ultimatum", "Rocky 4", "Rambo 3"
+  const wordNumMatch = title.match(/\b[A-Za-z]{3,}\s+(\d{1,2})(?:\s+|$)/);
+  if (wordNumMatch) return parseInt(wordNumMatch[1], 10);
 
   // Check ending number e.g. "Matrix 2", "Iron Man 3"
   const numMatch = title.match(/\b(\d{1,2})$/);

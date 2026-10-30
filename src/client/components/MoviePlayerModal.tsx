@@ -33,6 +33,7 @@ const MoviePlayerModal: React.FC<MoviePlayerModalProps> = ({ movie, onClose }) =
         subtitleTracks={movie.subtitleTracks}
         needsTranscode={movie.needsTranscode}
         mimeType={movie.mimeType}
+        duration={movie.duration}
         onClose={onClose}
       />
     </div>

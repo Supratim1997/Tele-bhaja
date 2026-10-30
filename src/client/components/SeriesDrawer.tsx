@@ -45,6 +45,7 @@ const SeriesDrawer: React.FC<SeriesDrawerProps> = ({ seriesId, onClose }) => {
           subtitleTracks={playingEpisode.subtitleTracks}
           needsTranscode={playingEpisode.needsTranscode}
           mimeType={playingEpisode.mimeType}
+          duration={playingEpisode.duration}
           onClose={() => setPlayingEpisode(null)}
         />
       </div>

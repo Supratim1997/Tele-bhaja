@@ -1,4 +1,4 @@
-nchis@echo off
+@echo off
 :: ─────────────────────────────────────────────────────────────────────────────
 :: TeleBhaja — Native startup script for Windows
 :: Usage: run.bat [optional_media_path]

@@ -15,6 +15,7 @@ interface PlayerProps {
   onClose?: () => void;
   needsTranscode?: boolean;
   mimeType?: string;
+  duration?: number;
 }
 
 type ControlsState = 'visible' | 'hidden';
@@ -30,7 +31,7 @@ function formatTime(seconds: number): string {
 
 const Player: React.FC<PlayerProps> = ({
   src, title, mediaType, mediaId, audioTracks = [], subtitleTracks = [],
-  onClose, needsTranscode = false, mimeType = 'video/mp4',
+  onClose, needsTranscode = false, mimeType = 'video/mp4', duration: knownDuration,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,7 +45,11 @@ const Player: React.FC<PlayerProps> = ({
   const [currentSrc, setCurrentSrc] = useState(src);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState(() => (knownDuration && knownDuration > 0 ? knownDuration : 0));
+  const [transcodeSeekOffset, setTranscodeSeekOffset] = useState(() => {
+    const match = src.match(/[?&]seek=([0-9.]+)/);
+    return match ? parseFloat(match[1]) : 0;
+  });
   const [buffered, setBuffered] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -83,7 +88,16 @@ const Player: React.FC<PlayerProps> = ({
     setCurrentSrc(src);
     setPlayerError(null);
     setIsBuffering(false);
+    const match = src.match(/[?&]seek=([0-9.]+)/);
+    setTranscodeSeekOffset(match ? parseFloat(match[1]) : 0);
   }, [src]);
+
+  // Keep duration in sync if knownDuration prop updates
+  useEffect(() => {
+    if (knownDuration && knownDuration > 0) {
+      setDuration(knownDuration);
+    }
+  }, [knownDuration]);
 
   // Reset handled flag when media changes
   useEffect(() => {
@@ -218,14 +232,43 @@ const Player: React.FC<PlayerProps> = ({
     }
   }, [showControls, toggleFullscreen]);
 
+  const seek = useCallback((seconds: number) => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const mediaDur = duration || vid.duration || 0;
+    const clamped = Math.max(0, Math.min(mediaDur, seconds));
+
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+
+    if (isTranscodedStream) {
+      const baseUrl = currentSrc.split('?')[0];
+      const newSrc = `${baseUrl}?transcode=1&seek=${clamped.toFixed(2)}&audio=${selectedAudio}`;
+      setTranscodeSeekOffset(clamped);
+      setCurrentTime(0);
+      setCurrentSrc(newSrc);
+      setPlayerError(null);
+      setIsBuffering(true);
+      vid.src = newSrc;
+      vid.load();
+      void vid.play().catch((err) => {
+        console.warn('Play after seek transcode failed:', err);
+      });
+    } else {
+      vid.currentTime = clamped;
+    }
+    showControls();
+  }, [duration, needsTranscode, currentSrc, selectedAudio, showControls]);
+
   const skipSeconds = useCallback((delta: number, side: 'left' | 'right') => {
     const vid = videoRef.current;
     if (!vid) return;
-    vid.currentTime = Math.max(0, Math.min(vid.duration || 0, vid.currentTime + delta));
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const current = isTranscodedStream ? (transcodeSeekOffset + currentTime) : (vid.currentTime || 0);
+    seek(current + delta);
     setSkipAnimation(side);
     setTimeout(() => setSkipAnimation(null), 600);
     showControls();
-  }, [showControls]);
+  }, [needsTranscode, currentSrc, transcodeSeekOffset, currentTime, seek, showControls]);
 
   // ── Volume & Mute HUD ───────────────────────────────────────────────────
   const showVolumeToast = useCallback((vol: number, isMuted: boolean) => {
@@ -271,17 +314,10 @@ const Player: React.FC<PlayerProps> = ({
     else { vid.pause(); setControlsState('visible'); }
   }, [showControls]);
 
-  const seek = useCallback((seconds: number) => {
-    const vid = videoRef.current;
-    if (!vid) return;
-    vid.currentTime = Math.max(0, Math.min(vid.duration, seconds));
-    showControls();
-  }, [showControls]);
-
   const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const bar = e.currentTarget;
     const rect = bar.getBoundingClientRect();
-    const ratio = (e.clientX - rect.left) / rect.width;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     seek(ratio * duration);
   }, [duration, seek]);
 
@@ -291,15 +327,26 @@ const Player: React.FC<PlayerProps> = ({
     if (!vid) return;
 
     const onTimeUpdate = () => {
+      const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+      const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
+      const mediaDur = (knownDuration && knownDuration > 0) ? knownDuration : (duration || vid.duration || 0);
+
       setCurrentTime(vid.currentTime);
-      updatePosition(vid.currentTime, vid.duration);
+      updatePosition(currentPos, mediaDur);
       if (vid.buffered.length > 0) {
         setBuffered(vid.buffered.end(vid.buffered.length - 1));
       }
       setIsBuffering(false);
     };
 
-    const onDurationChange = () => setDuration(vid.duration);
+    const onDurationChange = () => {
+      if (!knownDuration || knownDuration <= 0) {
+        if (isFinite(vid.duration) && !isNaN(vid.duration) && vid.duration > 0) {
+          setDuration(vid.duration);
+        }
+      }
+    };
+
     const onPlay = () => {
       setPlaying(true);
       startHeartbeat();
@@ -313,6 +360,17 @@ const Player: React.FC<PlayerProps> = ({
       setIsBuffering(false);
     };
     const onEnded = () => {
+      const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+      const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
+      const mediaDur = (knownDuration && knownDuration > 0) ? knownDuration : (duration || vid.duration || 0);
+
+      // Guard against premature 'ended' events on fragmented MP4 chunk boundaries
+      if (isTranscodedStream && mediaDur > 30 && currentPos < mediaDur - 15) {
+        console.warn(`[Player] Ignored premature 'ended' at ${currentPos.toFixed(1)}s (total: ${mediaDur.toFixed(1)}s). Attempting to continue playback.`);
+        seek(currentPos);
+        return;
+      }
+
       setPlaying(false);
       stopHeartbeat();
       setControlsState('visible');
@@ -411,7 +469,7 @@ const Player: React.FC<PlayerProps> = ({
       vid.removeEventListener('playing', onPlaying);
       vid.removeEventListener('error', onError);
     };
-  }, [updatePosition, startHeartbeat, stopHeartbeat, showControls, mediaType, mediaId, title, currentSrc, needsTranscode]);
+  }, [updatePosition, startHeartbeat, stopHeartbeat, showControls, mediaType, mediaId, title, currentSrc, needsTranscode, knownDuration, duration, transcodeSeekOffset, seek]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
   useEffect(() => {
@@ -478,8 +536,12 @@ const Player: React.FC<PlayerProps> = ({
     setSelectedAudio(trackIndex);
     const vid = videoRef.current;
     if (!vid) return;
-    const currentPos = vid.currentTime;
-    const newSrc = `${src}${src.includes('?') ? '&' : '?'}audio=${trackIndex}&seek=${currentPos}`;
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
+    const baseUrl = currentSrc.split('?')[0];
+    const newSrc = `${baseUrl}?transcode=1&audio=${trackIndex}&seek=${currentPos.toFixed(2)}`;
+    setTranscodeSeekOffset(currentPos);
+    setCurrentTime(0);
     setCurrentSrc(newSrc);
     setShowSubMenu(null);
     setIsBuffering(true);
@@ -487,7 +549,7 @@ const Player: React.FC<PlayerProps> = ({
     vid.src = newSrc;
     vid.load();
     void vid.play().catch(() => {});
-  }, [src]);
+  }, [needsTranscode, currentSrc, transcodeSeekOffset]);
 
   // ── Subtitle track switching ────────────────────────────────────────────
   const switchSubtitle = useCallback((track: SubtitleTrack | null) => {
@@ -524,9 +586,12 @@ const Player: React.FC<PlayerProps> = ({
   const playWithTranscoding = useCallback(() => {
     const vid = videoRef.current;
     if (!vid) return;
-    const pos = vid.currentTime || 0;
-    const base = src.split('?')[0];
-    const newSrc = `${base}?transcode=1&seek=${pos}&audio=${selectedAudio}`;
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const pos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : (vid.currentTime || 0);
+    const base = currentSrc.split('?')[0];
+    const newSrc = `${base}?transcode=1&seek=${pos.toFixed(2)}&audio=${selectedAudio}`;
+    setTranscodeSeekOffset(pos);
+    setCurrentTime(0);
     setCurrentSrc(newSrc);
     setPlayerError(null);
     setIsBuffering(true);
@@ -535,7 +600,7 @@ const Player: React.FC<PlayerProps> = ({
     void vid.play().catch((err) => {
       console.warn('Play after transcode failed:', err);
     });
-  }, [src, selectedAudio]);
+  }, [needsTranscode, currentSrc, transcodeSeekOffset, selectedAudio]);
 
   // ── Retry Playback ──────────────────────────────────────────────────────
   const retryPlayback = useCallback(() => {
@@ -549,8 +614,11 @@ const Player: React.FC<PlayerProps> = ({
     });
   }, []);
 
-  const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
+  const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+  const effectiveCurrentTime = isTranscodedStream ? (transcodeSeekOffset + currentTime) : currentTime;
+  const effectiveBuffered = isTranscodedStream ? (transcodeSeekOffset + buffered) : buffered;
+  const progressPct = duration > 0 ? (effectiveCurrentTime / duration) * 100 : 0;
+  const bufferedPct = duration > 0 ? (effectiveBuffered / duration) * 100 : 0;
 
   return (
     <div
@@ -905,7 +973,7 @@ const Player: React.FC<PlayerProps> = ({
 
               {/* Time */}
               <span className="text-white/80 text-xs font-mono">
-                {formatTime(currentTime)} / {formatTime(duration)}
+                {formatTime(effectiveCurrentTime)} / {formatTime(duration)}
               </span>
             </div>
 
