@@ -1,9 +1,58 @@
 import { Router } from 'express';
 import { streamingService } from '../streaming/streaming.js';
 import { transcodingService } from '../streaming/transcoding.js';
+import { hlsService } from '../streaming/hls.js';
 import { getDb } from '../db/database.js';
 
 export const streamRouter = Router();
+
+// ── GET /api/stream/hls/movie/:id/playlist.m3u8 ─────────────────────────────
+streamRouter.get('/hls/movie/:id/playlist.m3u8', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
+    await hlsService.servePlaylist(req, res, 'movie', id);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[HLS Route Error] /hls/movie/${req.params.id}/playlist.m3u8:`, msg);
+    if (!res.headersSent) res.status(500).json({ error: msg });
+  }
+});
+
+// ── GET /api/stream/hls/movie/:id/:segment ──────────────────────────────────
+streamRouter.get('/hls/movie/:id/:segment', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).end(); return; }
+    await hlsService.serveSegment(req, res, 'movie', id, req.params.segment);
+  } catch (err: unknown) {
+    if (!res.headersSent) res.status(500).end();
+  }
+});
+
+// ── GET /api/stream/hls/episode/:id/playlist.m3u8 ───────────────────────────
+streamRouter.get('/hls/episode/:id/playlist.m3u8', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
+    await hlsService.servePlaylist(req, res, 'episode', id);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[HLS Route Error] /hls/episode/${req.params.id}/playlist.m3u8:`, msg);
+    if (!res.headersSent) res.status(500).json({ error: msg });
+  }
+});
+
+// ── GET /api/stream/hls/episode/:id/:segment ────────────────────────────────
+streamRouter.get('/hls/episode/:id/:segment', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).end(); return; }
+    await hlsService.serveSegment(req, res, 'episode', id, req.params.segment);
+  } catch (err: unknown) {
+    if (!res.headersSent) res.status(500).end();
+  }
+});
 
 // ── GET /api/stream/movie/:id ──────────────────────────────────────────────
 streamRouter.get('/movie/:id', async (req, res) => {

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { config } from './config.js';
 import { getDb, initDb } from './db/database.js';
@@ -11,6 +12,7 @@ import { progressRouter } from './routes/progress.js';
 import { scanRouter, franchiseRouter, categoriesRouter } from './routes/scan.js';
 import { controlRouter } from './routes/control.js';
 import { scanner } from './scanner/scanner.js';
+import { startGateSystem } from './gate/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -95,15 +97,40 @@ async function main() {
   scanner.on('complete', (status: unknown) => console.log('[Scanner] Scan complete:', JSON.stringify(status)));
 
   // ── Start server ────────────────────────────────────────────────────────
-  app.listen(config.port, config.host, () => {
+  app.listen(config.port, config.host, async () => {
+    const ifaces = os.networkInterfaces();
+    let lanIp: string | undefined;
+    let tailscaleIp: string | undefined;
+
+    for (const [name, addrs] of Object.entries(ifaces)) {
+      if (!addrs) continue;
+      for (const a of addrs) {
+        if (a.family === 'IPv4' && !a.internal) {
+          if (name.toLowerCase().includes('tailscale') || a.address.startsWith('100.')) {
+            tailscaleIp = a.address;
+          } else if (!lanIp && (a.address.startsWith('192.168.') || a.address.startsWith('10.') || a.address.startsWith('172.'))) {
+            lanIp = a.address;
+          }
+        }
+      }
+    }
+
+    if (config.gate.enabled) {
+      try {
+        await startGateSystem();
+      } catch (gateErr: unknown) {
+        const msg = gateErr instanceof Error ? gateErr.message : String(gateErr);
+        console.error(`[GateSystem] Startup failed: ${msg}`);
+      }
+    }
+
     console.log(`
-╔══════════════════════════════════════════════════════╗
-║           🎬  TeleBhaja OTT Platform  🎬             ║
-╠══════════════════════════════════════════════════════╣
-║  Server  : http://${config.host}:${config.port}               ║
-║  LAN URL : http://<YOUR_IP>:${config.port}                    ║
-║  Media   : ${config.mediaStoragePaths.join('; ').slice(0, 39).padEnd(39)}║
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════╗
+║               🎬  TeleBhaja OTT Platform  🎬                     ║
+╠══════════════════════════════════════════════════════════════════╣
+║  Core App (Internal) : http://localhost:${config.port}
+${config.gate.enabled ? `║  Public Gate (Proxy) : http://localhost:${config.gate.proxyPort} (Point Public Tunnel Here)\n║  Admin Gate (Private): http://${tailscaleIp || '127.0.0.1'}:${config.gate.adminPort} (Tailscale Mesh Only)\n` : ''}${lanIp ? `║  Wi-Fi/LAN Direct    : http://${lanIp}:${config.port}\n` : ''}${tailscaleIp ? `║  Tailscale App Direct: http://${tailscaleIp}:${config.port}\n` : ''}║  Media Drives        : ${config.mediaStoragePaths.join('; ').slice(0, 39).padEnd(39)}║
+╚══════════════════════════════════════════════════════════════════╝
     `.trim());
 
     // Auto-scan on startup

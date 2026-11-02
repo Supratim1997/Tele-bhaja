@@ -104,10 +104,80 @@ export const api = {
   },
 
   stream: {
-    movieUrl: (id: number, transcode = false) =>
-      `${BASE}/stream/movie/${id}${transcode ? '?transcode=1' : ''}`,
-    episodeUrl: (id: number, transcode = false) =>
-      `${BASE}/stream/episode/${id}${transcode ? '?transcode=1' : ''}`,
+    canPlayHls: (): boolean => {
+      if (typeof document === 'undefined') return false;
+      const v = document.createElement('video');
+      return Boolean(
+        v.canPlayType('application/vnd.apple.mpegurl') ||
+        v.canPlayType('application/x-mpegURL')
+      );
+    },
+    movieUrl: (id: number, transcode = false) => {
+      let token = '';
+      if (typeof document !== 'undefined') {
+        const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
+        if (match && match[1]) token = match[1];
+      }
+      const params = new URLSearchParams();
+      if (token) params.set('gate_token', token);
+
+      if (transcode) {
+        if (api.stream.canPlayHls()) {
+          const qs = params.toString();
+          return `${BASE}/stream/hls/movie/${id}/playlist.m3u8${qs ? `?${qs}` : ''}`;
+        }
+        params.set('transcode', '1');
+      }
+
+      const qs = params.toString();
+      return `${BASE}/stream/movie/${id}${qs ? `?${qs}` : ''}`;
+    },
+    episodeUrl: (id: number, transcode = false) => {
+      let token = '';
+      if (typeof document !== 'undefined') {
+        const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
+        if (match && match[1]) token = match[1];
+      }
+      const params = new URLSearchParams();
+      if (token) params.set('gate_token', token);
+
+      if (transcode) {
+        if (api.stream.canPlayHls()) {
+          const qs = params.toString();
+          return `${BASE}/stream/hls/episode/${id}/playlist.m3u8${qs ? `?${qs}` : ''}`;
+        }
+        params.set('transcode', '1');
+      }
+
+      const qs = params.toString();
+      return `${BASE}/stream/episode/${id}${qs ? `?${qs}` : ''}`;
+    },
+    hlsMovieUrl: (id: number, options?: { seek?: number; audio?: number }) => {
+      let token = '';
+      if (typeof document !== 'undefined') {
+        const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
+        if (match && match[1]) token = match[1];
+      }
+      const params = new URLSearchParams();
+      if (options?.seek && options.seek > 0) params.set('seek', options.seek.toFixed(2));
+      if (typeof options?.audio === 'number') params.set('audio', String(options.audio));
+      if (token) params.set('gate_token', token);
+      const qs = params.toString();
+      return `${BASE}/stream/hls/movie/${id}/playlist.m3u8${qs ? `?${qs}` : ''}`;
+    },
+    hlsEpisodeUrl: (id: number, options?: { seek?: number; audio?: number }) => {
+      let token = '';
+      if (typeof document !== 'undefined') {
+        const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
+        if (match && match[1]) token = match[1];
+      }
+      const params = new URLSearchParams();
+      if (options?.seek && options.seek > 0) params.set('seek', options.seek.toFixed(2));
+      if (typeof options?.audio === 'number') params.set('audio', String(options.audio));
+      if (token) params.set('gate_token', token);
+      const qs = params.toString();
+      return `${BASE}/stream/hls/episode/${id}/playlist.m3u8${qs ? `?${qs}` : ''}`;
+    },
     thumbnailMovieUrl: (id: number) => `${BASE}/stream/thumbnail/movie/${id}`,
     thumbnailEpisodeUrl: (id: number) => `${BASE}/stream/thumbnail/episode/${id}`,
     subtitleUrl: (path: string) => `${BASE}/stream/subtitle?path=${encodeURIComponent(path)}`,

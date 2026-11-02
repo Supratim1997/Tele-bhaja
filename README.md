@@ -28,6 +28,15 @@ A production-grade, self-hosted OTT streaming platform that reads directly from 
   - Multi-token fuzzy search across titles, release years, overviews, franchises, and episode file paths.
   - Advanced heuristic parsing engine for complex release group naming (`Year`, `Resolution`, `Codec`, `Audio tags`).
   - Automatic TMDb metadata enrichment for movie posters, backdrops, ratings, and plot summaries.
+- **🛡️ Two-Tier Remote Access & Gatekeeper Interceptor**:
+  - Two-tier security gate: public tunnel proxy with quarantine waiting room, paired with a private Tailscale-only administrative console.
+  - Granular single-click approval, duration assignment (1h, 4h, 12h, 24h), and instant session revocation.
+  - Multi-layer cookie, token, and IP fallback authorization allowing seamless remote streaming across proxies and firewalls.
+- **🍎 Apple HLS (HTTP Live Streaming) Engine**:
+  - Native hardware-accelerated HLS pipeline for iPhone, iPad, and Safari browsers.
+  - On-the-fly packaging of Matroska (`.mkv`), AC-3 audio, and incompatible codecs into Apple-compliant `.m3u8` playlists and `.ts` segments.
+  - Video stream copying (`-c:v copy`) for H.264 running at 25x-47x real-time speed with near-zero CPU overhead.
+  - Automated session lifecycle management, temporary cache recycling, and lock-screen scrubbing support.
 - **📱 Responsive & LAN Ready**:
   - Designed for mobile phones, tablets, smart TVs, and desktop browsers.
   - Zero-configuration LAN access: stream on any phone or tablet on the same Wi-Fi.
@@ -82,6 +91,141 @@ npm run dev:client
 ```
 
 The UI opens at `http://localhost:3000`. Devices on the same Wi-Fi can access via `http://<YOUR_LAN_IP>:3000`.
+
+---
+
+## 🛡️ Two-Tier Remote Access & Gatekeeper Architecture
+
+TeleBhaja includes an enterprise-grade, two-tier network access architecture that allows you to safely share your media library over the public internet without exposing administrative controls:
+
+- **Tier 1 (Public Interception Gate - Port 4000)**: Sits in front of the core app. All unauthenticated incoming traffic is quarantined into an interactive, live-polling **Waiting Room**.
+- **Tier 2 (Private Admin Gate - Port 8080)**: Binds strictly to `127.0.0.1` and your host's private **Tailscale Mesh VPN IP**. It is completely isolated and never exposed to public tunnels.
+
+```text
+       [ Public Internet / Tunnel ]
+                    │
+            (Port 4000 ONLY)
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │ Public Interception    │
+       │ Proxy Gate (Port 4000) │
+       └────────────┬───────────┘
+                    │
+      ┌─────────────┴─────────────┐
+      ▼                           ▼
+[ Unapproved Visitor ]     [ Approved Session ]
+ Redirect to Waiting Room   Forward to TeleBhaja
+ (polls every 3 seconds)    (Port 3000 - HTTP 206)
+                                  ▲
+                                  │ (One-Click Approve)
+                                  │
+                    ┌────────────────────────────┐
+                    │ Private Admin Portal       │
+                    │ (Port 8080 - Tailscale VPN)│
+                    │ Strictly bound to VPN IP   │
+                    └────────────────────────────┘
+```
+
+---
+
+### 🖥️ How to Run TeleBhaja with Remote Access
+
+#### Step 1: Start the Platform
+Run the native Windows launcher:
+```cmd
+.\run.bat
+```
+*(Or specify custom media drives: `.\run.bat "E:\Movies\;E:\Series\"`)*
+
+The server automatically initializes and displays your network endpoints:
+```text
+╔══════════════════════════════════════════════════════════════════╗
+║               🎬  TeleBhaja OTT Platform  🎬                     ║
+╠══════════════════════════════════════════════════════════════════╣
+║  Core App (Internal) : http://localhost:3000
+║  Public Gate (Proxy) : http://localhost:4000 (Point Public Tunnel Here)
+║  Admin Gate (Private): http://<TAILSCALE_IP>:8080 (Tailscale Mesh Only)
+║  Wi-Fi/LAN Direct    : http://192.168.x.x:3000
+║  Tailscale Direct    : http://<TAILSCALE_IP>:3000
+╚══════════════════════════════════════════════════════════════════╝
+```
+
+#### Step 2: Expose the Public Gate
+Open a second terminal window and run:
+
+```cmd
+# 1-Click Launcher (Uses the included standalone cloudflared binary):
+.\tunnel.bat
+```
+
+*(Alternatively, you can run `.\cloudflared.exe tunnel --url http://localhost:4000` directly, or use Tailscale Funnel: `& "C:\Program Files\Tailscale\tailscale.exe" funnel 4000`)*
+
+Cloudflare will generate a public HTTPS URL (e.g. `https://random-words.trycloudflare.com`). **Share this URL with your users/friends.**
+
+---
+
+### 👤 Section 1: User Guide (How Users Access TeleBhaja)
+
+This section explains how a guest or family member connects to TeleBhaja from outside your local network.
+
+1. **Open the Shared Link**:
+   - The user opens the public tunnel link (e.g., `https://random-words.trycloudflare.com`) in any browser on their smartphone, tablet, laptop, or smart TV.
+2. **The Waiting Room Screen**:
+   - Because they do not yet have an approved session, they are automatically intercepted and redirected to the **Access Gate Waiting Room** (`/waiting-room`).
+   - The page displays:
+     - ⏳ **Status**: `Pending Administrator Approval`
+     - **Pulsing Indicator**: Visual confirmation that their connection request has been securely logged.
+     - **Connection Details**: Displays their Client IP, Device/Browser type, and unique Session ID.
+     - **Auto-Polling Status**: The page automatically polls for approval every **3 seconds**.
+   - *Note for Users*: **Do not close or manually refresh the page.** The page will transition into the streaming platform automatically as soon as the admin approves.
+3. **Automatic Entry Upon Approval**:
+   - The moment the administrator approves the request, the indicator turns green (✓ **Access Approved!**).
+   - Within 1 second, the screen automatically redirects to the TeleBhaja home page.
+4. **Streaming Experience**:
+   - The user has full, uninterrupted access to stream movies and TV series with instant seeking, custom playback speeds (`0.5x` - `2.0x`), subtitles, and audio track selection.
+5. **Session Expiry & Re-request**:
+   - Sessions remain active for the duration granted by the administrator (default: 4 hours).
+   - If a session expires or is revoked, the screen displays `Session Expired` with a **"Request New Session"** button to request access again.
+
+---
+
+### 🔑 Section 2: Administrator Guide (How Admin Approves Access)
+
+This section explains how you, the administrator, monitor, approve, and revoke remote visitors from your phone or PC.
+
+1. **Connect to Tailscale**:
+   - On your smartphone (or admin laptop), ensure your **Tailscale VPN** is turned ON.
+2. **Open the Private Admin Portal**:
+   - Navigate in your mobile or desktop browser to:
+     ```text
+     http://<TAILSCALE_IP>:8080
+     ```
+     *(Or `http://127.0.0.1:8080` if sitting directly at the host computer)*.
+   - *Security Guarantee*: The admin portal is strictly bound to your Tailscale mesh IP and `127.0.0.1`. It is impossible for outside internet users or public tunnels to reach this page.
+3. **Review Incoming Requests**:
+   - The dashboard updates automatically in real-time (every 4 seconds).
+   - In the **Active Pending Requests** card, you will see each waiting visitor:
+     - **Client IP**: (e.g., `49.37.x.x` or tunnel client IP)
+     - **Device**: (e.g., `📱 iPhone / Safari`, `📱 Android Device`, `💻 Mac / Safari`)
+     - **Timestamp**: (e.g., `Requested 12s ago`)
+4. **Approve a Visitor (1-Click)**:
+   - Choose an access duration from the dropdown:
+     - `1 Hour` (Quick preview)
+     - `4 Hours` (Default — movie + series binge)
+     - `12 Hours` (Full day)
+     - `24 Hours` (Weekend pass)
+   - Tap the green **`✓ Approve`** button.
+   - The user's screen instantly unlocks and loads the OTT library.
+5. **Deny Unwanted Requests**:
+   - Tap the **`✕ Deny`** button on any unrecognized visitor. Their waiting room will immediately show "Access Denied".
+6. **Live Session Monitoring & 1-Click Revocation**:
+   - In the **Active Approved Sessions** panel, monitor:
+     - Active visitors currently watching.
+     - A live countdown timer (e.g., `3h 48m remaining`).
+   - Tap **`Revoke Access`** at any time to instantly terminate their session and disconnect their stream.
+7. **Housekeeping**:
+   - The system automatically cleans up expired sessions. You can also tap **`Clean Expired`** in the Session History panel at any time to purge old logs.
 
 ---
 

@@ -277,6 +277,12 @@ async function run() {
     const clientErrBody = JSON.parse(clientErrRes.body);
     assert(clientErrBody.ok === true, 'Stream error telemetry reports ok: true');
 
+    // HLS Endpoint validation
+    const hls404Res = await makeRequest(server, '/api/stream/hls/movie/999999/playlist.m3u8');
+    assert(hls404Res.status === 404, 'GET /api/stream/hls/movie/:id/playlist.m3u8 for missing movie returns 404');
+    const hlsBadSegRes = await makeRequest(server, '/api/stream/hls/movie/1/malicious.txt');
+    assert(hlsBadSegRes.status === 400, 'GET /api/stream/hls/movie/:id/:segment for non-ts segment returns 400');
+
     // Test 7: Subtitle conversion on-the-fly (.srt to WebVTT)
     console.log('\n6. Testing Subtitle On-the-Fly WebVTT Streaming:');
     const subRes = await makeRequest(server, `/api/stream/subtitle?path=${encodeURIComponent(path.join(TEST_DIR, 'English/Test Film Feature (2010)/Test.Film.Feature.2010.1080p.en.srt'))}`);

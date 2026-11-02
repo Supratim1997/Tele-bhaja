@@ -29,6 +29,20 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function buildStreamUrl(src: string, updates: Record<string, string>): string {
+  const [base, query] = src.split('?');
+  const sp = new URLSearchParams(query || '');
+  for (const [key, val] of Object.entries(updates)) {
+    sp.set(key, val);
+  }
+  if (!sp.has('gate_token') && typeof document !== 'undefined') {
+    const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
+    if (match && match[1]) sp.set('gate_token', match[1]);
+  }
+  const qs = sp.toString();
+  return `${base}${qs ? `?${qs}` : ''}`;
+}
+
 const Player: React.FC<PlayerProps> = ({
   src, title, mediaType, mediaId, audioTracks = [], subtitleTracks = [],
   onClose, needsTranscode = false, mimeType = 'video/mp4', duration: knownDuration,
@@ -238,11 +252,15 @@ const Player: React.FC<PlayerProps> = ({
     const mediaDur = duration || vid.duration || 0;
     const clamped = Math.max(0, Math.min(mediaDur, seconds));
 
-    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
 
     if (isTranscodedStream) {
-      const baseUrl = currentSrc.split('?')[0];
-      const newSrc = `${baseUrl}?transcode=1&seek=${clamped.toFixed(2)}&audio=${selectedAudio}`;
+      const isHls = currentSrc.includes('/hls/');
+      const newSrc = buildStreamUrl(currentSrc, {
+        ...(isHls ? {} : { transcode: '1' }),
+        seek: clamped.toFixed(2),
+        audio: String(selectedAudio),
+      });
       setTranscodeSeekOffset(clamped);
       setCurrentTime(0);
       setCurrentSrc(newSrc);
@@ -262,7 +280,7 @@ const Player: React.FC<PlayerProps> = ({
   const skipSeconds = useCallback((delta: number, side: 'left' | 'right') => {
     const vid = videoRef.current;
     if (!vid) return;
-    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
     const current = isTranscodedStream ? (transcodeSeekOffset + currentTime) : (vid.currentTime || 0);
     seek(current + delta);
     setSkipAnimation(side);
@@ -327,7 +345,7 @@ const Player: React.FC<PlayerProps> = ({
     if (!vid) return;
 
     const onTimeUpdate = () => {
-      const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+      const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
       const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
       const mediaDur = (knownDuration && knownDuration > 0) ? knownDuration : (duration || vid.duration || 0);
 
@@ -360,7 +378,7 @@ const Player: React.FC<PlayerProps> = ({
       setIsBuffering(false);
     };
     const onEnded = () => {
-      const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+      const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
       const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
       const mediaDur = (knownDuration && knownDuration > 0) ? knownDuration : (duration || vid.duration || 0);
 
@@ -404,7 +422,7 @@ const Player: React.FC<PlayerProps> = ({
       setIsBuffering(false);
       const err = vid.error;
       let msg = 'Playback stopped due to an error.';
-      let canTranscode = !currentSrc.includes('transcode=1') && !needsTranscode;
+      let canTranscode = (!currentSrc.includes('transcode=1') && !needsTranscode) || (currentSrc.includes('transcode=1') && api.stream.canPlayHls());
 
       if (err) {
         switch (err.code) {
@@ -536,10 +554,14 @@ const Player: React.FC<PlayerProps> = ({
     setSelectedAudio(trackIndex);
     const vid = videoRef.current;
     if (!vid) return;
-    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
     const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
-    const baseUrl = currentSrc.split('?')[0];
-    const newSrc = `${baseUrl}?transcode=1&audio=${trackIndex}&seek=${currentPos.toFixed(2)}`;
+    const isHls = currentSrc.includes('/hls/');
+    const newSrc = buildStreamUrl(currentSrc, {
+      ...(isHls ? {} : { transcode: '1' }),
+      audio: String(trackIndex),
+      seek: currentPos.toFixed(2),
+    });
     setTranscodeSeekOffset(currentPos);
     setCurrentTime(0);
     setCurrentSrc(newSrc);
@@ -586,10 +608,23 @@ const Player: React.FC<PlayerProps> = ({
   const playWithTranscoding = useCallback(() => {
     const vid = videoRef.current;
     if (!vid) return;
-    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+    const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
     const pos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : (vid.currentTime || 0);
-    const base = currentSrc.split('?')[0];
-    const newSrc = `${base}?transcode=1&seek=${pos.toFixed(2)}&audio=${selectedAudio}`;
+    const useHls = api.stream.canPlayHls();
+
+    let newSrc: string;
+    if (useHls) {
+      newSrc = mediaType === 'movie'
+        ? api.stream.hlsMovieUrl(mediaId, { seek: pos, audio: selectedAudio })
+        : api.stream.hlsEpisodeUrl(mediaId, { seek: pos, audio: selectedAudio });
+    } else {
+      newSrc = buildStreamUrl(currentSrc, {
+        transcode: '1',
+        seek: pos.toFixed(2),
+        audio: String(selectedAudio),
+      });
+    }
+
     setTranscodeSeekOffset(pos);
     setCurrentTime(0);
     setCurrentSrc(newSrc);
@@ -600,7 +635,7 @@ const Player: React.FC<PlayerProps> = ({
     void vid.play().catch((err) => {
       console.warn('Play after transcode failed:', err);
     });
-  }, [needsTranscode, currentSrc, transcodeSeekOffset, selectedAudio]);
+  }, [needsTranscode, currentSrc, transcodeSeekOffset, selectedAudio, mediaType, mediaId]);
 
   // ── Retry Playback ──────────────────────────────────────────────────────
   const retryPlayback = useCallback(() => {
@@ -614,7 +649,7 @@ const Player: React.FC<PlayerProps> = ({
     });
   }, []);
 
-  const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1');
+  const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
   const effectiveCurrentTime = isTranscodedStream ? (transcodeSeekOffset + currentTime) : currentTime;
   const effectiveBuffered = isTranscodedStream ? (transcodeSeekOffset + buffered) : buffered;
   const progressPct = duration > 0 ? (effectiveCurrentTime / duration) * 100 : 0;
@@ -638,6 +673,7 @@ const Player: React.FC<PlayerProps> = ({
         className="w-full h-full object-contain"
         playsInline
         preload="metadata"
+        crossOrigin="use-credentials"
         muted={muted}
       />
 

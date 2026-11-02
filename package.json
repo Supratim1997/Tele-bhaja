@@ -13,7 +13,7 @@
     "start": "node dist/server/index.js",
     "scan": "tsx src/server/scanner/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/parser.test.ts && tsx test/integration.test.ts"
+    "test": "tsx test/parser.test.ts && tsx test/integration.test.ts && tsx test/gate.test.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

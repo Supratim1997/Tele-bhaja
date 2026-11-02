@@ -51,6 +51,16 @@ export const config = {
 
   uiPin: process.env.UI_PIN ?? '',
 
+  gate: {
+    enabled: process.env.GATE_ENABLED !== 'false',
+    proxyPort: parseInt(process.env.GATE_PORT ?? '4000', 10),
+    adminPort: parseInt(process.env.GATE_ADMIN_PORT ?? '8080', 10),
+    targetUrl: process.env.GATE_TARGET_URL ?? `http://127.0.0.1:${process.env.PORT ?? '3000'}`,
+    defaultDurationHours: parseInt(process.env.GATE_SESSION_HOURS ?? '4', 10),
+    secret: process.env.GATE_SECRET ?? 'telebhaja-gate-secret-key-2026',
+    tailscaleIp: process.env.TAILSCALE_IP ?? '',
+  },
+
   // Codec lists that require transcoding for browser compatibility
   incompatibleVideoCodecs: ['hevc', 'h265', 'vc1', 'vp9', 'av1', 'mpeg2video', 'mpeg4'],
   incompatibleAudioCodecs: ['ac3', 'eac3', 'dts', 'truehd', 'mlp', 'pcm_s24le', 'pcm_s32le'],

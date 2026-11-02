@@ -155,14 +155,37 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4"') do (
 )
 :found_ip
 
+:: Detect Tailscale IP if available
+set TAILSCALE_IP=
+if exist "%ProgramFiles%\Tailscale\tailscale.exe" (
+  for /f "tokens=*" %%t in ('"%ProgramFiles%\Tailscale\tailscale.exe" ip -4 2^>nul') do (
+    set "TAILSCALE_IP=%%t"
+  )
+) else (
+  for /f "tokens=*" %%t in ('tailscale ip -4 2^>nul') do (
+    set "TAILSCALE_IP=%%t"
+  )
+)
+
 echo.
-echo 🚀 Starting TeleBhaja...
-echo    Local URL  : http://localhost:%PORT%
-if defined LOCAL_IP echo    Network URL: http://%LOCAL_IP%:%PORT%
+echo 🚀 Starting TeleBhaja with Two-Tier Remote Gatekeeper...
+echo    Core App (Internal) : http://localhost:%PORT%
+echo    Public Gate (Proxy) : http://localhost:4000 (Expose to Internet via Tunnel)
+if defined TAILSCALE_IP echo    Admin Gate [Private]: http://!TAILSCALE_IP!:8080 [Tailscale Mesh Only]
+if not defined TAILSCALE_IP echo    Admin Gate [Private]: http://127.0.0.1:8080 [Localhost Only]
+if defined LOCAL_IP echo    Direct Wi-Fi / LAN  : http://%LOCAL_IP%:%PORT%
+if defined TAILSCALE_IP echo    Direct Mesh VPN     : http://!TAILSCALE_IP!:%PORT%
 echo.
-echo    Open the Network URL on your phone to stream!
+echo    [Workflow]
+echo    1. Expose public gate: open a second terminal and run .\tunnel.bat
+echo    2. Remote users land on the /waiting-room page automatically.
+echo    3. Approve or revoke access from your phone via the Admin Gate on Tailscale.
+echo.
 echo    Press Ctrl+C to stop.
 echo.
+
+:: Ensure ports are released from any previous instance
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort %PORT%,4000,8080 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" 2>nul
 
 :: Start server
 if /i "%DEV_MODE%"=="true" (
