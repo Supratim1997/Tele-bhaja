@@ -31,7 +31,7 @@ export class TranscodingService {
     const output = new PassThrough();
     const ffmpegPath = getFFmpegPath();
 
-    const args: string[] = [];
+    const args: string[] = ['-threads', '0', '-max_muxing_queue_size', '2048'];
 
     // Fast seek before input
     if (opts.seekTime && opts.seekTime > 0) {
@@ -69,9 +69,11 @@ export class TranscodingService {
       args.push(
         '-vcodec', 'libx264',
         '-preset', 'ultrafast',
+        '-tune', 'fastdecode',
         '-profile:v', 'high',
         '-level', '4.1',
         '-pix_fmt', 'yuv420p',
+        '-g', '60',
         '-b:v', opts.videoBitrate ?? `${config.ffmpeg.videoBitrate}k`,
         '-acodec', 'aac',
         '-b:a', opts.audioBitrate ?? `${config.ffmpeg.audioBitrate}k`,

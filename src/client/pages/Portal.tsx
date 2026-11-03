@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../lib/api.js';
-import type { FileTreeNode, ControlStats, MediaOverrideInput, FolderCategorizeInput } from '../../shared/types.js';
+import Player from '../components/Player.js';
+import type { FileTreeNode, ControlStats, MediaOverrideInput, FolderCategorizeInput, AudioTrack, SubtitleTrack } from '../../shared/types.js';
 
 interface EditItemState {
   node: FileTreeNode;
@@ -18,6 +19,18 @@ interface FolderEditState {
   isAnimated: boolean;
   languages: string;
   applyToChildren: boolean;
+}
+
+interface PlayingMediaState {
+  src: string;
+  title: string;
+  mediaType: 'movie' | 'episode';
+  mediaId: number;
+  duration?: number;
+  needsTranscode?: boolean;
+  mimeType?: string;
+  audioTracks?: AudioTrack[];
+  subtitleTracks?: SubtitleTrack[];
 }
 
 export const Portal: React.FC = () => {
@@ -39,6 +52,74 @@ export const Portal: React.FC = () => {
   // Folder categorization state
   const [folderEditingItem, setFolderEditingItem] = useState<FolderEditState | null>(null);
   const [existingFranchises, setExistingFranchises] = useState<{ id: number; name: string }[]>([]);
+
+  // Playing media modal state
+  const [playingMedia, setPlayingMedia] = useState<PlayingMediaState | null>(null);
+  const [loadingPlayId, setLoadingPlayId] = useState<string | null>(null);
+
+  // Helper to find first media item in folder
+  const findFirstMediaNode = (node: FileTreeNode): FileTreeNode | null => {
+    if (node.isMedia) return node;
+    if (node.isDirectory && node.children) {
+      for (const child of node.children) {
+        const found = findFirstMediaNode(child);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const handlePlay = useCallback(async (clickedNode: FileTreeNode) => {
+    const nodeToPlay = clickedNode.isDirectory ? findFirstMediaNode(clickedNode) : clickedNode;
+    if (!nodeToPlay) {
+      alert('No playable media files found in this folder.');
+      return;
+    }
+
+    setLoadingPlayId(clickedNode.id);
+    try {
+      let mediaId = nodeToPlay.mediaId;
+      let mediaType = (nodeToPlay.mediaType === 'series' ? 'episode' : nodeToPlay.mediaType) ?? 'movie';
+      let needsTranscode = nodeToPlay.needsTranscode ?? false;
+      let mimeType = nodeToPlay.mimeType;
+      let duration = nodeToPlay.duration;
+      let audioTracks: AudioTrack[] | undefined;
+      let subtitleTracks: SubtitleTrack[] | undefined;
+
+      // If file is not yet indexed in database, resolve/index it on-demand
+      if (!mediaId) {
+        const resolved = await api.control.resolveMedia(nodeToPlay.path);
+        mediaId = resolved.id;
+        mediaType = resolved.mediaType;
+        needsTranscode = Boolean(resolved.needsTranscode);
+        mimeType = resolved.mimeType;
+        duration = resolved.duration;
+        audioTracks = resolved.audioTracks;
+        subtitleTracks = resolved.subtitleTracks;
+      }
+
+      const isExcluded = Boolean(nodeToPlay.isExcluded);
+      const streamSrc = mediaType === 'episode'
+        ? api.stream.episodeUrl(mediaId, needsTranscode, isExcluded)
+        : api.stream.movieUrl(mediaId, needsTranscode, isExcluded);
+
+      setPlayingMedia({
+        src: streamSrc,
+        title: nodeToPlay.title || nodeToPlay.name.replace(/\.[^.]+$/, ''),
+        mediaType: mediaType as 'movie' | 'episode',
+        mediaId,
+        duration,
+        needsTranscode,
+        mimeType,
+        audioTracks,
+        subtitleTracks,
+      });
+    } catch (err: unknown) {
+      alert(`Unable to play media: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoadingPlayId(null);
+    }
+  }, []);
 
   useEffect(() => {
     api.control.getFranchises().then(setExistingFranchises).catch(() => {});
@@ -439,7 +520,7 @@ export const Portal: React.FC = () => {
         <div className="glass-card overflow-hidden border-surface-800">
           {/* Header row */}
           <div className="grid grid-cols-12 gap-2 px-4 py-2.5 text-[11px] font-semibold text-surface-400 uppercase tracking-wider bg-surface-900/80 border-b border-surface-800">
-            <div className="col-span-7 md:col-span-6 flex items-center gap-2">
+            <div className="col-span-6 md:col-span-5 flex items-center gap-2">
               <span>File / Folder Structure</span>
             </div>
             <div className="col-span-3 md:col-span-3 text-right md:text-left">
@@ -448,7 +529,7 @@ export const Portal: React.FC = () => {
             <div className="hidden md:block md:col-span-2 text-right">
               <span>Size</span>
             </div>
-            <div className="col-span-2 md:col-span-1 text-right">
+            <div className="col-span-3 md:col-span-2 text-right">
               <span>Actions</span>
             </div>
           </div>
@@ -485,6 +566,8 @@ export const Portal: React.FC = () => {
                 filterQuery={filterQuery}
                 filterMode={filterMode}
                 nodeMatchesFilter={nodeMatchesFilter}
+                onPlay={handlePlay}
+                loadingPlayId={loadingPlayId}
               />
             ) : null}
           </div>
@@ -818,6 +901,27 @@ export const Portal: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── Player Modal Overlay ────────────────────────────────────────────── */}
+      {playingMedia && (
+        <div
+          id="portal-player-modal"
+          className="fixed inset-0 z-50 bg-black animate-fade-in"
+        >
+          <Player
+            src={playingMedia.src}
+            title={playingMedia.title}
+            mediaType={playingMedia.mediaType}
+            mediaId={playingMedia.mediaId}
+            audioTracks={playingMedia.audioTracks}
+            subtitleTracks={playingMedia.subtitleTracks}
+            needsTranscode={playingMedia.needsTranscode}
+            mimeType={playingMedia.mimeType}
+            duration={playingMedia.duration}
+            onClose={() => setPlayingMedia(null)}
+          />
+        </div>
+      )}
     </div>
   );
 };
@@ -837,11 +941,14 @@ interface TreeNodeViewProps {
   filterQuery: string;
   filterMode: 'all' | 'included' | 'excluded';
   nodeMatchesFilter: (node: FileTreeNode, q: string, mode: 'all' | 'included' | 'excluded') => boolean;
+  onPlay: (node: FileTreeNode) => void;
+  loadingPlayId: string | null;
 }
 
 const TreeNodeView: React.FC<TreeNodeViewProps> = ({
   node, depth, expandedPaths, toggleExpand, handleToggle,
   openEdit, openFolderCategorize, formatSize, togglingPath, filterQuery, filterMode, nodeMatchesFilter,
+  onPlay, loadingPlayId,
 }) => {
   // If filter active, check if this node or any children match
   const matches = nodeMatchesFilter(node, filterQuery, filterMode);
@@ -849,6 +956,7 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
 
   const isExpanded = expandedPaths.has(node.path);
   const isToggling = togglingPath === node.path;
+  const isLoadingPlay = loadingPlayId === node.id;
 
   // Folder inclusion state
   const isFullyExcluded = node.isDirectory && node.totalMediaCount > 0 && node.excludedMediaCount === node.totalMediaCount;
@@ -867,7 +975,7 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
         style={{ paddingLeft: `${Math.max(16, depth * 20 + 16)}px` }}
       >
         {/* Name + Checkbox column */}
-        <div className="col-span-7 md:col-span-6 flex items-center gap-2 min-w-0">
+        <div className="col-span-6 md:col-span-5 flex items-center gap-2 min-w-0">
           {/* Checkbox (media files and directories with media) */}
           {node.isMedia || (node.isDirectory && node.totalMediaCount > 0) ? (
             <button
@@ -933,14 +1041,28 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
           </span>
 
           {/* Label / Name */}
-          <span
-            className={`truncate font-medium ${
-              node.isDirectory ? 'text-white' : node.isMedia ? 'text-surface-100' : 'text-surface-500'
-            }`}
-            title={node.path}
-          >
-            {node.name}
-          </span>
+          {node.isMedia ? (
+            <button
+              type="button"
+              onClick={() => onPlay(node)}
+              className="truncate font-medium text-surface-100 hover:text-brand-400 transition-colors text-left flex items-center gap-1.5 group"
+              title={`Play ${node.name}`}
+            >
+              <span className="truncate">{node.name}</span>
+              <span className="opacity-0 group-hover:opacity-100 text-[10px] text-brand-400 font-semibold transition-opacity flex-shrink-0">
+                ▶ Play
+              </span>
+            </button>
+          ) : (
+            <span
+              className={`truncate font-medium ${
+                node.isDirectory ? 'text-white' : 'text-surface-500'
+              }`}
+              title={node.path}
+            >
+              {node.name}
+            </span>
+          )}
 
           {/* Folder media counter */}
           {node.isDirectory && node.totalMediaCount > 0 && (
@@ -1032,27 +1154,63 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
         </div>
 
         {/* Actions Column */}
-        <div className="col-span-2 md:col-span-1 text-right">
+        <div className="col-span-3 md:col-span-2 text-right flex items-center justify-end gap-1.5">
           {node.isDirectory ? (
-            <button
-              onClick={() => openFolderCategorize(node)}
-              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                node.categoryType
-                  ? 'bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60'
-                  : 'bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white'
-              }`}
-              title="Categorize this folder (Series, Franchise, etc.)"
-            >
-              🏷️ Categorize
-            </button>
-          ) : node.isMedia && node.mediaId ? (
-            <button
-              onClick={() => openEdit(node)}
-              className="px-2 py-1 rounded bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white text-[11px] font-medium transition-colors"
-              title="Edit categorization and metadata"
-            >
-              Edit
-            </button>
+            <>
+              {node.totalMediaCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onPlay(node)}
+                  disabled={isLoadingPlay}
+                  className="px-2 py-1 rounded bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-[11px] font-semibold transition-colors flex items-center gap-1 shadow-sm"
+                  title="Play first media in this folder"
+                >
+                  {isLoadingPlay ? (
+                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    '▶ Play'
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => openFolderCategorize(node)}
+                className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                  node.categoryType
+                    ? 'bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60'
+                    : 'bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white'
+                }`}
+                title="Categorize this folder (Series, Franchise, etc.)"
+              >
+                🏷️
+              </button>
+            </>
+          ) : node.isMedia ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onPlay(node)}
+                disabled={isLoadingPlay}
+                className="px-2 py-1 rounded bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-[11px] font-semibold transition-colors flex items-center gap-1 shadow-sm"
+                title="Play this file"
+              >
+                {isLoadingPlay ? (
+                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  '▶ Play'
+                )}
+              </button>
+              {node.mediaId ? (
+                <button
+                  type="button"
+                  onClick={() => openEdit(node)}
+                  className="px-2 py-1 rounded bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-white text-[11px] font-medium transition-colors"
+                  title="Edit categorization and metadata"
+                >
+                  Edit
+                </button>
+              ) : null}
+            </>
           ) : null}
         </div>
       </div>
@@ -1075,6 +1233,8 @@ const TreeNodeView: React.FC<TreeNodeViewProps> = ({
               filterQuery={filterQuery}
               filterMode={filterMode}
               nodeMatchesFilter={nodeMatchesFilter}
+              onPlay={onPlay}
+              loadingPlayId={loadingPlayId}
             />
           ))}
         </div>

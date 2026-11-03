@@ -7,18 +7,21 @@ A production-grade, self-hosted OTT streaming platform that reads directly from 
 ## 🌟 Key Features
 
 - **🎬 Netflix-Style Streaming Experience**:
-  - Full-screen HTML5 video player with keyboard controls, touch gesture skipping, double-tap / double-click fullscreen toggle, and screen orientation locking on mobile.
+  - Full-screen video player with unified **hold-and-drag scrubbing** on both mobile touchscreens and laptop mice, with live floating timestamp tooltips and an enlarged touch hit area.
+  - Universal **Fullscreen Support** across all platforms: native iOS Safari playback (`webkitEnterFullscreen`), Android Chrome with automatic landscape orientation locking, iPad/macOS Safari (`webkitRequestFullscreen`), and standard desktop HTML5 Fullscreen.
   - Interactive horizontal carousels with smooth Left (`‹`) and Right (`›`) scroll buttons across Continue Watching, Franchise Collections, Movies, and Series.
   - Option to remove in-progress movies and episodes from Continue Watching with 1 click.
   - Dynamic Buffering Indicators and In-Player Error Overlays with automatic on-the-fly FFmpeg transcode fallback.
   - Comprehensive server-side CMD error logging for byte-range streaming, FFmpeg subprocesses, and client diagnostics.
   - Generous thumbnail grid spacing across all mobile, tablet, and desktop display sizes.
-  - HTTP 206 Partial Content byte-range streaming for instant seeking.
+  - HTTP 206 Partial Content byte-range streaming with 4MB chunk clamping (`MAX_CHUNK_SIZE`) and 512KB read streams (`highWaterMark`) to eliminate socket stalls and excessive buffering over cellular or tunnel connections.
+  - Video player forward buffer preloading (`preload="auto"`) and immutable HLS segment caching (`Cache-Control: public, max-age=31536000, immutable`) for instantaneous playback start and smooth scrubbing.
   - Automatic on-the-fly subtitle conversion (SRT → WebVTT) with sub-second latency.
   - Resume playback prompt with periodic heartbeat progress saving.
 - **🗂️ Content Control & Categorization Portal**:
   - Web-based content management portal accessible via the top navigation bar (`🗂️ Content Portal`).
   - Interactive folder and file tree explorer with expand/collapse and tri-state checkboxes.
+  - **Direct File & Folder Playback**: Click the `▶ Play` button on any file or folder in the tree view to launch immediate playback in the embedded player. Unindexed media files are indexed on the fly in ~50ms, and excluded items can be auditioned safely in preview mode without affecting OTT library visibility. Folders feature one-click auditioning of their first available media title.
   - **Folder Level Categorization**: Tag entire folders as **Series** (with seasons/episodes) or **Franchises** (with chronological movie collections), or apply Animated and Language tags to whole folders.
   - Granular inclusion/exclusion controls: choose exactly which files or folders are exposed to the OTT library.
   - Persistent settings in SQLite (`path_controls` table) that survive restarts, reboots, and rescans.

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/database.js';
 import { config } from '../config.js';
+import { scanner } from '../scanner/scanner.js';
 import type { FileTreeNode, ControlStats, MediaOverrideInput, FolderCategorizeInput } from '../../shared/types.js';
 
 export const controlRouter = Router();
@@ -74,6 +75,7 @@ controlRouter.get('/tree', async (req, res) => {
     // 2. Fetch all indexed movies & episodes for quick metadata lookup
     const moviesRows = await db.prepare(`
       SELECT m.id, m.title, m.year, m.is_animated, m.languages, m.file_path, m.file_size,
+             m.duration, m.mime_type, m.needs_transcode,
              m.is_excluded, f.name as franchise_name
       FROM media_items m
       LEFT JOIN franchises f ON m.franchise_id = f.id
@@ -87,6 +89,7 @@ controlRouter.get('/tree', async (req, res) => {
 
     const episodesRows = await db.prepare(`
       SELECT e.id, e.title, e.file_path, e.file_size, e.is_excluded,
+             e.duration, e.mime_type, e.needs_transcode,
              s.id as series_id, s.title as series_title, s.year, s.is_animated, s.languages
       FROM episodes e
       JOIN series s ON e.series_id = s.id
@@ -225,6 +228,9 @@ controlRouter.get('/tree', async (req, res) => {
               mediaId: movie ? Number(movie.id) : ep ? Number(ep.id) : undefined,
               title: movie?.title ?? ep?.title,
               year: movie?.year ?? ep?.year,
+              duration: movie?.duration ? Number(movie.duration) : ep?.duration ? Number(ep.duration) : undefined,
+              mimeType: movie?.mime_type ?? ep?.mime_type,
+              needsTranscode: movie ? Boolean(movie.needs_transcode) : ep ? Boolean(ep.needs_transcode) : undefined,
               isAnimated: movie ? Boolean(movie.is_animated) : ep ? Boolean(ep.is_animated) : undefined,
               languages,
               franchiseName: movie?.franchise_name,
@@ -720,6 +726,27 @@ controlRouter.post('/reset', async (_req, res) => {
     await db.execute({ sql: `UPDATE episodes SET is_excluded = 0, updated_at = ?`, args: [now] });
     await db.execute({ sql: `UPDATE series SET is_excluded = 0, updated_at = ?`, args: [now] });
     res.json({ ok: true, message: 'All exclusions reset to included' });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ── POST /api/control/resolve-media ──────────────────────────────────────────
+// Resolves or indexes a single media file on-demand for instant playback from Portal
+controlRouter.post('/resolve-media', async (req, res) => {
+  try {
+    const targetPath = req.body?.path;
+    if (!targetPath || typeof targetPath !== 'string') {
+      res.status(400).json({ error: 'Missing path' });
+      return;
+    }
+    const resolved = await scanner.processSingleFile(targetPath);
+    if (!resolved) {
+      res.status(404).json({ error: 'Could not resolve or index media file' });
+      return;
+    }
+    res.json({ ok: true, ...resolved });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });

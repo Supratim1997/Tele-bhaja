@@ -387,6 +387,28 @@ async function run() {
     const libAfterDirExData = JSON.parse(libAfterDirEx.body);
     assert(!libAfterDirExData.movies.some((m: any) => m.title === 'Test Film Feature'), 'Directory exclusion excludes nested Test Film Feature');
 
+    // Verify resolve-media and preview streaming on excluded media
+    const excludedFilePath = path.join(TEST_DIR, 'English/Test Film Feature (2010)/Test.Film.Feature.2010.1080p.mp4');
+    const resolveRes = await makeRequest(server, '/api/control/resolve-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: excludedFilePath }),
+    });
+    assert(resolveRes.status === 200, 'POST /api/control/resolve-media returns 200');
+    const resolveData = JSON.parse(resolveRes.body);
+    assert(resolveData.ok === true && resolveData.mediaType === 'movie', 'resolve-media resolves movie correctly');
+    assert(resolveData.id > 0, 'resolve-media returns valid media ID');
+
+    // Standard stream without preview=1 should fail with 404 for excluded movie
+    const streamExcludedNorm = await makeRequest(server, `/api/stream/movie/${resolveData.id}`);
+    assert(streamExcludedNorm.status === 404, 'Stream on excluded movie without preview returns 404');
+
+    // Stream with preview=1 should succeed for Content Portal playback
+    const streamExcludedPreview = await makeRequest(server, `/api/stream/movie/${resolveData.id}?preview=1`, {
+      headers: { Range: 'bytes=0-1024' },
+    });
+    assert(streamExcludedPreview.status === 206, 'Stream on excluded movie with preview=1 returns 206');
+
     // 8.8 Manual categorization override: PUT /api/control/media/movie/:id
     const classicMovie = libAfterDirExData.movies.find((m: any) => m.title.includes('Test Classic Drama'));
     assert(Boolean(classicMovie), 'Test Classic Drama movie found for manual categorization test');

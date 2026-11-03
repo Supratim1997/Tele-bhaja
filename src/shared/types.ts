@@ -212,6 +212,9 @@ export interface FileTreeNode {
   mediaId?: number;
   title?: string;
   year?: number;
+  duration?: number;
+  mimeType?: string;
+  needsTranscode?: boolean;
   isAnimated?: boolean;
   languages?: string[];
   franchiseName?: string;
@@ -234,6 +237,9 @@ export interface ControlStats {
 export interface MediaOverrideInput {
   title?: string;
   year?: number;
+  duration?: number;
+  mimeType?: string;
+  needsTranscode?: boolean;
   isAnimated?: boolean;
   languages?: string[];
   franchiseName?: string;

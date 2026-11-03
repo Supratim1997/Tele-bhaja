@@ -49,6 +49,10 @@ const Player: React.FC<PlayerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const isScrubbingRef = useRef<boolean>(false);
+  const wasPlayingBeforeScrubRef = useRef<boolean>(false);
+  const totalDurationRef = useRef<number>(knownDuration && knownDuration > 0 ? knownDuration : 0);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const doubleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef = useRef<number>(0);
@@ -60,6 +64,8 @@ const Player: React.FC<PlayerProps> = ({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() => (knownDuration && knownDuration > 0 ? knownDuration : 0));
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubTime, setScrubTime] = useState(0);
   const [transcodeSeekOffset, setTranscodeSeekOffset] = useState(() => {
     const match = src.match(/[?&]seek=([0-9.]+)/);
     return match ? parseFloat(match[1]) : 0;
@@ -109,6 +115,7 @@ const Player: React.FC<PlayerProps> = ({
   // Keep duration in sync if knownDuration prop updates
   useEffect(() => {
     if (knownDuration && knownDuration > 0) {
+      totalDurationRef.current = knownDuration;
       setDuration(knownDuration);
     }
   }, [knownDuration]);
@@ -161,44 +168,122 @@ const Player: React.FC<PlayerProps> = ({
     setControlsState('visible');
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     controlsTimerRef.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) {
+      if (videoRef.current && !videoRef.current.paused && !isScrubbingRef.current) {
         setControlsState('hidden');
         setShowSubMenu(null);
       }
     }, 3500);
   }, []);
 
-  // ── Fullscreen toggle ───────────────────────────────────────────────────
+  // ── Fullscreen check & toggle ───────────────────────────────────────────
+  const isCurrentlyFullscreen = useCallback(() => {
+    const vid = videoRef.current as any;
+    const doc = document as any;
+    return Boolean(
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.mozFullScreenElement ||
+      doc.msFullscreenElement ||
+      vid?.webkitDisplayingFullscreen
+    );
+  }, []);
+
   const toggleFullscreen = useCallback(async () => {
     const now = Date.now();
     if (now - lastFsToggleRef.current < 350) return; // Debounce rapid triggers
     lastFsToggleRef.current = now;
 
-    const el = containerRef.current;
-    if (!el) return;
+    const container = containerRef.current as any;
+    const vid = videoRef.current as any;
+    const doc = document as any;
+
+    const isFs = isCurrentlyFullscreen();
+
     try {
-      if (!document.fullscreenElement) {
-        await el.requestFullscreen?.();
-        // Force landscape on mobile devices
-        if ('orientation' in screen && 'lock' in screen.orientation) {
-          await (screen.orientation as ScreenOrientation & { lock: (o: string) => Promise<void> })
-            .lock('landscape').catch(() => {});
+      if (isFs) {
+        // Exit fullscreen across all browser engines
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen().catch(() => {});
+        } else if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          doc.msExitFullscreen();
+        } else if (vid?.webkitExitFullscreen) {
+          vid.webkitExitFullscreen();
         }
+        setIsFullscreen(false);
       } else {
-        await document.exitFullscreen?.();
+        // Enter fullscreen:
+        // 1. Standard HTML5 Fullscreen (Laptop/PC Chrome, Edge, Firefox, Android)
+        if (container?.requestFullscreen) {
+          try {
+            await container.requestFullscreen();
+            setIsFullscreen(true);
+            if ('orientation' in screen && 'lock' in screen.orientation) {
+              await (screen.orientation as any).lock('landscape').catch(() => {});
+            }
+            return;
+          } catch (err) {
+            console.warn('container.requestFullscreen failed, trying webkit fallback:', err);
+          }
+        }
+
+        // 2. WebKit container fullscreen (iPad, macOS Safari)
+        if (container?.webkitRequestFullscreen) {
+          try {
+            container.webkitRequestFullscreen();
+            setIsFullscreen(true);
+            return;
+          } catch (err) {
+            console.warn('container.webkitRequestFullscreen failed, trying video element:', err);
+          }
+        }
+
+        // 3. iPhone iOS Safari: native video fullscreen
+        if (vid && typeof vid.webkitEnterFullscreen === 'function') {
+          try {
+            vid.webkitEnterFullscreen();
+            setIsFullscreen(true);
+            return;
+          } catch (err) {
+            console.warn('vid.webkitEnterFullscreen failed:', err);
+          }
+        }
       }
     } catch (err) {
       console.warn('Fullscreen toggle failed:', err);
     }
-  }, []);
+  }, [isCurrentlyFullscreen]);
 
   useEffect(() => {
-    const onChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
+    const handleFsChange = () => {
+      setIsFullscreen(isCurrentlyFullscreen());
     };
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
+
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    document.addEventListener('mozfullscreenchange', handleFsChange);
+    document.addEventListener('MSFullscreenChange', handleFsChange);
+
+    const vid = videoRef.current as any;
+    if (vid) {
+      vid.addEventListener('webkitbeginfullscreen', handleFsChange);
+      vid.addEventListener('webkitendfullscreen', handleFsChange);
+    }
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      document.removeEventListener('mozfullscreenchange', handleFsChange);
+      document.removeEventListener('MSFullscreenChange', handleFsChange);
+      if (vid) {
+        vid.removeEventListener('webkitbeginfullscreen', handleFsChange);
+        vid.removeEventListener('webkitendfullscreen', handleFsChange);
+      }
+    };
+  }, [isCurrentlyFullscreen, currentSrc]);
 
   // ── Tap / Click Handling (Double tap for fullscreen) ────────────────────
   const handleVideoAreaTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
@@ -249,7 +334,7 @@ const Player: React.FC<PlayerProps> = ({
   const seek = useCallback((seconds: number) => {
     const vid = videoRef.current;
     if (!vid) return;
-    const mediaDur = duration || vid.duration || 0;
+    const mediaDur = duration || totalDurationRef.current || vid.duration || 0;
     const clamped = Math.max(0, Math.min(mediaDur, seconds));
 
     const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
@@ -332,12 +417,78 @@ const Player: React.FC<PlayerProps> = ({
     else { vid.pause(); setControlsState('visible'); }
   }, [showControls]);
 
-  const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const bar = e.currentTarget;
+  // ── Hold & Drag Scrubbing (Mobile Touch & Laptop Mouse) ──────────────────
+  const calculateTimeFromPointer = useCallback((clientX: number): number => {
+    const bar = progressBarRef.current;
+    const total = duration || totalDurationRef.current || 0;
+    if (!bar || total <= 0) return 0;
     const rect = bar.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    seek(ratio * duration);
-  }, [duration, seek]);
+    if (rect.width <= 0) return 0;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * total;
+  }, [duration]);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
+    const targetTime = calculateTimeFromPointer(e.clientX);
+    isScrubbingRef.current = true;
+    setIsScrubbing(true);
+    setScrubTime(targetTime);
+
+    const vid = videoRef.current;
+    if (vid && !vid.paused) {
+      wasPlayingBeforeScrubRef.current = true;
+      vid.pause();
+    } else {
+      wasPlayingBeforeScrubRef.current = false;
+    }
+    showControls();
+  }, [calculateTimeFromPointer, showControls]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const targetTime = calculateTimeFromPointer(e.clientX);
+    setScrubTime(targetTime);
+    showControls();
+  }, [calculateTimeFromPointer, showControls]);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+
+    const finalTargetTime = calculateTimeFromPointer(e.clientX);
+    isScrubbingRef.current = false;
+    setIsScrubbing(false);
+    seek(finalTargetTime);
+
+    if (wasPlayingBeforeScrubRef.current && videoRef.current) {
+      void videoRef.current.play().catch(() => {});
+    }
+    showControls();
+  }, [calculateTimeFromPointer, seek, showControls]);
+
+  const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    isScrubbingRef.current = false;
+    setIsScrubbing(false);
+    if (wasPlayingBeforeScrubRef.current && videoRef.current) {
+      void videoRef.current.play().catch(() => {});
+    }
+  }, []);
 
   // ── Video event handlers & error management ─────────────────────────────
   useEffect(() => {
@@ -347,7 +498,7 @@ const Player: React.FC<PlayerProps> = ({
     const onTimeUpdate = () => {
       const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
       const currentPos = isTranscodedStream ? (transcodeSeekOffset + vid.currentTime) : vid.currentTime;
-      const mediaDur = (knownDuration && knownDuration > 0) ? knownDuration : (duration || vid.duration || 0);
+      const mediaDur = (knownDuration && knownDuration > 0) ? knownDuration : (duration || totalDurationRef.current || vid.duration || 0);
 
       setCurrentTime(vid.currentTime);
       updatePosition(currentPos, mediaDur);
@@ -358,9 +509,14 @@ const Player: React.FC<PlayerProps> = ({
     };
 
     const onDurationChange = () => {
-      if (!knownDuration || knownDuration <= 0) {
-        if (isFinite(vid.duration) && !isNaN(vid.duration) && vid.duration > 0) {
-          setDuration(vid.duration);
+      if (isFinite(vid.duration) && !isNaN(vid.duration) && vid.duration > 0) {
+        const isTranscoded = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
+        const calculatedTotal = isTranscoded ? (transcodeSeekOffset + vid.duration) : vid.duration;
+        if (calculatedTotal > totalDurationRef.current) {
+          totalDurationRef.current = calculatedTotal;
+          setDuration(calculatedTotal);
+        } else if (totalDurationRef.current > 0) {
+          setDuration(totalDurationRef.current);
         }
       }
     };
@@ -400,7 +556,7 @@ const Player: React.FC<PlayerProps> = ({
       setIsBuffering(true);
     };
     const onStalled = () => {
-      if (!vid.paused && vid.readyState < 3) {
+      if (!vid.paused && vid.readyState < 2) {
         setIsBuffering(true);
       }
     };
@@ -652,8 +808,9 @@ const Player: React.FC<PlayerProps> = ({
   const isTranscodedStream = needsTranscode || currentSrc.includes('transcode=1') || currentSrc.includes('/hls/');
   const effectiveCurrentTime = isTranscodedStream ? (transcodeSeekOffset + currentTime) : currentTime;
   const effectiveBuffered = isTranscodedStream ? (transcodeSeekOffset + buffered) : buffered;
-  const progressPct = duration > 0 ? (effectiveCurrentTime / duration) * 100 : 0;
-  const bufferedPct = duration > 0 ? (effectiveBuffered / duration) * 100 : 0;
+  const displayTime = isScrubbing ? scrubTime : effectiveCurrentTime;
+  const progressPct = duration > 0 ? Math.max(0, Math.min(100, (displayTime / duration) * 100)) : 0;
+  const bufferedPct = duration > 0 ? Math.max(0, Math.min(100, (effectiveBuffered / duration) * 100)) : 0;
 
   return (
     <div
@@ -672,7 +829,7 @@ const Player: React.FC<PlayerProps> = ({
         src={currentSrc}
         className="w-full h-full object-contain"
         playsInline
-        preload="metadata"
+        preload="auto"
         crossOrigin="use-credentials"
         muted={muted}
       />
@@ -945,34 +1102,62 @@ const Player: React.FC<PlayerProps> = ({
 
         {/* Bottom controls */}
         <div
-          className="px-4 pb-safe pb-6 pt-12 pointer-events-auto"
-          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%)' }}
+          className="px-3 md:px-6 pb-safe pb-4 md:pb-6 pt-10 md:pt-14 pointer-events-auto"
+          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.92) 0%, transparent 100%)' }}
         >
-          {/* Progress bar */}
+          {/* Progress bar container (Hold and drag seek for mobile touch & laptop mouse) */}
           <div
+            ref={progressBarRef}
             id="progress-bar"
-            className="progress-bar cursor-pointer mb-3 relative h-1 group hover:h-1.5 transition-all"
-            onClick={handleProgressClick}
+            className="progress-bar-container relative w-full h-8 flex items-center cursor-pointer select-none touch-none group mb-2"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
           >
-            {/* Buffered */}
-            <div className="absolute inset-y-0 left-0 bg-white/20 rounded-full" style={{ width: `${bufferedPct}%` }} />
-            {/* Played */}
-            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
-            {/* Thumb */}
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-brand-500 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ left: `${progressPct}%`, transform: 'translate(-50%, -50%)' }}
-            />
+            {/* Track background */}
+            <div className="w-full h-1.5 md:h-1 group-hover:h-2 group-active:h-2 rounded-full bg-white/20 relative overflow-visible transition-all">
+              {/* Buffered */}
+              <div
+                className="absolute inset-y-0 left-0 bg-white/30 rounded-full pointer-events-none"
+                style={{ width: `${bufferedPct}%` }}
+              />
+              {/* Played */}
+              <div
+                className="absolute inset-y-0 left-0 bg-brand-500 rounded-full pointer-events-none"
+                style={{ width: `${progressPct}%` }}
+              />
+              {/* Thumb */}
+              <div
+                className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white shadow-lg pointer-events-none transform -translate-x-1/2 transition-transform ${
+                  isScrubbing
+                    ? 'scale-150 bg-brand-400 ring-4 ring-brand-500/30'
+                    : 'scale-100 md:scale-0 md:group-hover:scale-100'
+                }`}
+                style={{ left: `${progressPct}%` }}
+              />
+            </div>
+
+            {/* Floating timestamp tooltip */}
+            {isScrubbing && (
+              <div
+                className="absolute -top-8 px-2.5 py-1 rounded-lg bg-black/90 text-white font-mono text-xs font-semibold border border-white/20 shadow-xl pointer-events-none -translate-x-1/2 whitespace-nowrap"
+                style={{ left: `${Math.max(4, Math.min(96, progressPct))}%` }}
+              >
+                {formatTime(scrubTime)}
+              </div>
+            )}
           </div>
 
           {/* Time + controls row */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
               {/* Skip back 10s */}
               <button
                 id="skip-back-btn"
-                className="player-btn w-9 h-9 text-white"
+                className="player-btn w-10 h-10 md:w-9 md:h-9 text-white hover:text-brand-400"
                 onClick={() => skipSeconds(-10, 'left')}
+                title="Rewind 10 seconds"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
@@ -982,15 +1167,16 @@ const Player: React.FC<PlayerProps> = ({
 
               {/* Play/Pause (small) */}
               <button
-                className="player-btn w-9 h-9 text-white"
+                className="player-btn w-10 h-10 md:w-9 md:h-9 text-white hover:text-brand-400"
                 onClick={togglePlay}
+                title={playing ? 'Pause' : 'Play'}
               >
                 {playing ? (
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
                   </svg>
                 ) : (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z" />
                   </svg>
                 )}
@@ -999,21 +1185,23 @@ const Player: React.FC<PlayerProps> = ({
               {/* Skip forward 10s */}
               <button
                 id="skip-forward-btn"
-                className="player-btn w-9 h-9 text-white"
+                className="player-btn w-10 h-10 md:w-9 md:h-9 text-white hover:text-brand-400"
                 onClick={() => skipSeconds(10, 'right')}
+                title="Forward 10 seconds"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/>
+                  <text x="9" y="16" fontSize="6" fill="currentColor">10</text>
                 </svg>
               </button>
 
-              {/* Time */}
-              <span className="text-white/80 text-xs font-mono">
-                {formatTime(effectiveCurrentTime)} / {formatTime(duration)}
+              {/* Time display */}
+              <span className="text-white/80 text-[11px] sm:text-xs font-mono select-none whitespace-nowrap ml-1">
+                {formatTime(displayTime)} / {formatTime(duration)}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2">
               {/* Playback speed */}
               <div className="relative">
                 <button
@@ -1054,8 +1242,9 @@ const Player: React.FC<PlayerProps> = ({
               {/* Mute */}
               <button
                 id="mute-btn"
-                className="player-btn w-9 h-9 text-white"
+                className="player-btn w-10 h-10 md:w-9 md:h-9 text-white hover:text-brand-400"
                 onClick={toggleMute}
+                title={muted ? 'Unmute' : 'Mute'}
               >
                 {muted || volume === 0 ? (
                   <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
@@ -1071,8 +1260,9 @@ const Player: React.FC<PlayerProps> = ({
               {/* Fullscreen */}
               <button
                 id="fullscreen-btn"
-                className="player-btn w-9 h-9 text-white"
+                className="player-btn w-10 h-10 md:w-9 md:h-9 text-white hover:text-brand-400"
                 onClick={() => void toggleFullscreen()}
+                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
               >
                 {isFullscreen ? (
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">

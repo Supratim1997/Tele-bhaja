@@ -112,7 +112,7 @@ export const api = {
         v.canPlayType('application/x-mpegURL')
       );
     },
-    movieUrl: (id: number, transcode = false) => {
+    movieUrl: (id: number, transcode = false, preview = false) => {
       let token = '';
       if (typeof document !== 'undefined') {
         const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
@@ -120,6 +120,7 @@ export const api = {
       }
       const params = new URLSearchParams();
       if (token) params.set('gate_token', token);
+      if (preview) params.set('preview', '1');
 
       if (transcode) {
         if (api.stream.canPlayHls()) {
@@ -132,7 +133,7 @@ export const api = {
       const qs = params.toString();
       return `${BASE}/stream/movie/${id}${qs ? `?${qs}` : ''}`;
     },
-    episodeUrl: (id: number, transcode = false) => {
+    episodeUrl: (id: number, transcode = false, preview = false) => {
       let token = '';
       if (typeof document !== 'undefined') {
         const match = document.cookie.match(/telebhaja_gate=([^;]+)/);
@@ -140,6 +141,7 @@ export const api = {
       }
       const params = new URLSearchParams();
       if (token) params.set('gate_token', token);
+      if (preview) params.set('preview', '1');
 
       if (transcode) {
         if (api.stream.canPlayHls()) {
@@ -213,6 +215,21 @@ export const api = {
         body: JSON.stringify(data),
       }),
     getFranchises: () => apiFetch<{ id: number; name: string }[]>('/control/franchises'),
+    resolveMedia: (path: string) =>
+      apiFetch<{
+        ok: boolean;
+        mediaType: 'movie' | 'episode';
+        id: number;
+        title: string;
+        duration?: number;
+        mimeType?: string;
+        needsTranscode?: boolean;
+        audioTracks?: import('../../shared/types.js').AudioTrack[];
+        subtitleTracks?: import('../../shared/types.js').SubtitleTrack[];
+      }>('/control/resolve-media', {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      }),
     reset: () => apiFetch<{ ok: boolean; message: string }>('/control/reset', { method: 'POST' }),
   },
 

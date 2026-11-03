@@ -12,13 +12,13 @@ const App: React.FC = () => {
   return (
     <div className="relative min-h-screen bg-surface-950 text-white font-sans">
       {/* Top nav bar */}
-      <header className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between px-3 md:px-8 py-3 pt-safe bg-surface-950/90 backdrop-blur-md border-b border-surface-800/60">
-        <div className="flex items-center gap-3">
+      <header className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between px-3 md:px-8 py-2.5 md:py-3 pt-safe bg-surface-950/90 backdrop-blur-md border-b border-surface-800/60">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0">
           <button
             onClick={() => setPage('home')}
-            className="flex items-center gap-2 group focus:outline-none"
+            className="flex items-center gap-1.5 md:gap-2 group focus:outline-none"
           >
-            <span className="font-display font-black text-xl text-brand-500 tracking-tight group-hover:text-brand-400 transition-colors">
+            <span className="font-display font-black text-lg md:text-xl text-brand-500 tracking-tight group-hover:text-brand-400 transition-colors whitespace-nowrap">
               🎬 TeleBhaja
             </span>
           </button>
@@ -32,7 +32,7 @@ const App: React.FC = () => {
           <button
             id="nav-home-btn"
             onClick={() => setPage('home')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               page === 'home'
                 ? 'bg-brand-600 text-white shadow-md'
                 : 'text-surface-400 hover:text-white hover:bg-surface-800'
@@ -44,21 +44,21 @@ const App: React.FC = () => {
           <button
             id="nav-portal-btn"
             onClick={() => setPage('portal')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               page === 'portal'
                 ? 'bg-brand-600 text-white shadow-md'
                 : 'text-surface-400 hover:text-white hover:bg-surface-800'
             }`}
           >
             <span>🗂️</span>
-            <span>Content Portal</span>
+            <span><span className="hidden sm:inline">Content </span>Portal</span>
           </button>
         </nav>
 
         {/* Settings button */}
         <button
           id="settings-btn"
-          className="w-9 h-9 rounded-full bg-surface-800/80 flex items-center justify-center text-surface-300 hover:text-white hover:bg-surface-700 transition-colors backdrop-blur-sm border border-surface-700/50"
+          className="w-9 h-9 rounded-full bg-surface-800/80 flex items-center justify-center text-surface-300 hover:text-white hover:bg-surface-700 transition-colors backdrop-blur-sm border border-surface-700/50 flex-shrink-0"
           onClick={() => setSettingsOpen(true)}
           aria-label="Settings"
           title="Server Settings"

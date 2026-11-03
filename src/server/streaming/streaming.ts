@@ -42,7 +42,8 @@ export class StreamingService {
       is_excluded?: number;
     } | undefined;
 
-    if (!item || item.is_excluded === 1) {
+    const isPreview = req.query.preview === '1';
+    if (!item || (!isPreview && item.is_excluded === 1)) {
       console.warn(`[Stream Warning] Movie #${id} not found or excluded from playback.`);
       res.status(404).json({ error: 'Media not found or excluded from playback' });
       return;
@@ -71,7 +72,8 @@ export class StreamingService {
       is_excluded?: number;
     } | undefined;
 
-    if (!item || item.is_excluded === 1) {
+    const isPreview = req.query.preview === '1';
+    if (!item || (!isPreview && item.is_excluded === 1)) {
       console.warn(`[Stream Warning] Episode #${id} not found or excluded from playback.`);
       res.status(404).json({ error: 'Episode not found or excluded from playback' });
       return;
@@ -147,7 +149,10 @@ export class StreamingService {
     const endStr = rangeMatch[2];
 
     let start = startStr ? parseInt(startStr, 10) : 0;
-    let end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+    // For open-ended range requests (e.g. bytes=0-), cap chunk window to 4MB to prevent
+    // socket backpressure and eliminate buffering latency on mobile / tunnel streaming.
+    const MAX_CHUNK_SIZE = 4 * 1024 * 1024;
+    let end = endStr ? parseInt(endStr, 10) : Math.min(start + MAX_CHUNK_SIZE - 1, fileSize - 1);
 
     // Validate range per RFC 7233
     if (isNaN(start) || start < 0 || start >= fileSize || (endStr && start > end)) {
@@ -171,7 +176,7 @@ export class StreamingService {
       'Cache-Control': 'no-cache',
     });
 
-    const stream = fs.createReadStream(filePath, { start, end });
+    const stream = fs.createReadStream(filePath, { start, end, highWaterMark: 512 * 1024 });
     stream.pipe(res);
     stream.on('error', (err) => {
       console.error(`[Stream Error] ReadStream error for "${filePath}" [${start}-${end}]:`, err.message);

@@ -117,7 +117,8 @@ export class HLSService {
       is_excluded?: number;
     } | undefined;
 
-    if (!item || item.is_excluded === 1 || !fs.existsSync(item.file_path)) {
+    const isPreview = req.query.preview === '1';
+    if (!item || (!isPreview && item.is_excluded === 1) || !fs.existsSync(item.file_path)) {
       res.status(404).json({ error: 'Media not found or excluded' });
       return;
     }
@@ -154,8 +155,13 @@ export class HLSService {
 
     // If gate_token or session query params are present, propagate them to segment URLs
     const gateToken = req.query.gate_token as string;
-    if (gateToken) {
-      content = content.replace(/(segment_\d+\.ts)/g, `$1?gate_token=${encodeURIComponent(gateToken)}`);
+    const queryParts: string[] = [];
+    if (gateToken) queryParts.push(`gate_token=${encodeURIComponent(gateToken)}`);
+    if (isPreview) queryParts.push('preview=1');
+    const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+
+    if (queryString) {
+      content = content.replace(/(segment_\d+\.ts)/g, `$1${queryString}`);
     }
 
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -223,7 +229,7 @@ export class HLSService {
     matchingSession.lastAccessed = Date.now();
 
     res.setHeader('Content-Type', 'video/mp2t');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     const stream = fs.createReadStream(targetFile);
@@ -252,7 +258,7 @@ export class HLSService {
     const copyVideo = await canCopyVideo(filePath);
     const ffmpegPath = config.ffmpeg.ffmpegPath || 'ffmpeg';
 
-    const args: string[] = [];
+    const args: string[] = ['-threads', '0', '-max_muxing_queue_size', '2048'];
 
     // Fast seek before input
     if (seekTime > 0) {
@@ -274,9 +280,11 @@ export class HLSService {
       args.push(
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
+        '-tune', 'fastdecode',
         '-profile:v', 'high',
         '-level', '4.1',
         '-pix_fmt', 'yuv420p',
+        '-g', '60',
         '-b:v', `${config.ffmpeg.videoBitrate}k`,
         '-c:a', 'aac',
         '-b:a', `${config.ffmpeg.audioBitrate}k`,
@@ -326,7 +334,7 @@ export class HLSService {
 
       let elapsed = 0;
       const interval = setInterval(() => {
-        elapsed += 100;
+        elapsed += 50;
         if (fs.existsSync(playlistPath) && fs.existsSync(firstSegment)) {
           clearInterval(interval);
           session.isReady = true;
@@ -335,7 +343,7 @@ export class HLSService {
           clearInterval(interval);
           reject(new Error(`Timeout waiting for HLS playlist and segment: ${stderrLines.join('\n')}`));
         }
-      }, 100);
+      }, 50);
 
       proc.on('error', (err) => {
         clearInterval(interval);

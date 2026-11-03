@@ -9,7 +9,7 @@ import { getDb } from '../db/database.js';
 import { parseMediaPath } from './parser.js';
 import { probeFile } from './ffprobe.js';
 import { enrichMovie, enrichSeries } from './tmdb.js';
-import type { ScanStatus, SubtitleTrack } from '../../shared/types.js';
+import type { ScanStatus, SubtitleTrack, AudioTrack } from '../../shared/types.js';
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.mp4', '.m4v', '.mkv', '.webm', '.mov', '.avi',
@@ -205,6 +205,65 @@ export class MediaScanner extends EventEmitter {
     };
     walk(dir);
     return results;
+  }
+
+  /**
+   * Process and index a single file on-demand, returning its media metadata.
+   */
+  public async processSingleFile(filePath: string): Promise<{
+    mediaType: 'movie' | 'episode';
+    id: number;
+    title: string;
+    duration?: number;
+    mimeType?: string;
+    needsTranscode?: boolean;
+    audioTracks?: AudioTrack[];
+    subtitleTracks?: SubtitleTrack[];
+  } | null> {
+    const db = getDb();
+    const norm = filePath.replace(/\\/g, '/');
+    const win = filePath.replace(/\//g, '\\');
+    let movie = await db.prepare('SELECT id, title, duration, mime_type, needs_transcode, audio_tracks, subtitle_tracks FROM media_items WHERE file_path=? OR file_path=? OR file_path=?').get(filePath, norm, win) as any;
+    let ep = await db.prepare('SELECT id, title, duration, mime_type, needs_transcode, audio_tracks, subtitle_tracks FROM episodes WHERE file_path=? OR file_path=? OR file_path=?').get(filePath, norm, win) as any;
+
+    if (!movie && !ep) {
+      if (!fs.existsSync(filePath)) return null;
+      await this.processFile(filePath, true);
+      movie = await db.prepare('SELECT id, title, duration, mime_type, needs_transcode, audio_tracks, subtitle_tracks FROM media_items WHERE file_path=? OR file_path=? OR file_path=?').get(filePath, norm, win) as any;
+      ep = await db.prepare('SELECT id, title, duration, mime_type, needs_transcode, audio_tracks, subtitle_tracks FROM episodes WHERE file_path=? OR file_path=? OR file_path=?').get(filePath, norm, win) as any;
+    }
+
+    const parseTracks = (val: any) => {
+      if (!val) return undefined;
+      if (Array.isArray(val)) return val;
+      try { return JSON.parse(val); } catch { return undefined; }
+    };
+
+    if (movie) {
+      return {
+        mediaType: 'movie',
+        id: Number(movie.id),
+        title: String(movie.title),
+        duration: movie.duration ? Number(movie.duration) : undefined,
+        mimeType: movie.mime_type ? String(movie.mime_type) : undefined,
+        needsTranscode: Boolean(movie.needs_transcode),
+        audioTracks: parseTracks(movie.audio_tracks),
+        subtitleTracks: parseTracks(movie.subtitle_tracks),
+      };
+    }
+    if (ep) {
+      return {
+        mediaType: 'episode',
+        id: Number(ep.id),
+        title: String(ep.title),
+        duration: ep.duration ? Number(ep.duration) : undefined,
+        mimeType: ep.mime_type ? String(ep.mime_type) : undefined,
+        needsTranscode: Boolean(ep.needs_transcode),
+        audioTracks: parseTracks(ep.audio_tracks),
+        subtitleTracks: parseTracks(ep.subtitle_tracks),
+      };
+    }
+    return null;
   }
 
   private async processFile(filePath: string, force = false): Promise<void> {
